@@ -12,11 +12,15 @@ const config: Config = {
         s2: "#161b22",
         s3: "#21262d",
         s4: "#30363d",
-        /* Accent — warm amber/copper */
+        /* Accent — electric violet + cyan */
         accent: {
-          DEFAULT: "#d4a053",
-          dim: "rgba(212, 160, 83, 0.12)",
-          glow: "rgba(212, 160, 83, 0.06)",
+          DEFAULT: "#8b5cf6",
+          dim: "rgba(139, 92, 246, 0.12)",
+          glow: "rgba(139, 92, 246, 0.06)",
+        },
+        accent2: {
+          DEFAULT: "#06b6d4",
+          dim: "rgba(6, 182, 212, 0.12)",
         },
         /* Semantic */
         ok: { DEFAULT: "#3fb950", dim: "rgba(63, 185, 80, 0.12)" },

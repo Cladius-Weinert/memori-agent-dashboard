@@ -1,609 +1,658 @@
 "use client";
-
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Layout } from "@/app/components/Layout";
+import { ModelPicker } from "@/components/ModelPicker";
 import {
-  Bot, Send, Loader2, CheckCircle, XCircle, Globe, HardDrive,
-  RefreshCw, Sparkles, Download, Brain, MessageSquare, Plus, Trash2, ChevronLeft
+  Bot, Send, Loader2, CheckCircle, XCircle, Brain, ListChecks, Search,
+  Zap, ChevronDown, ChevronRight, Terminal, Database, Globe, FileText,
+  HardDrive, Server, Code, BarChart3, PenTool, RefreshCw,
 } from "lucide-react";
 import { getHeaders, apiUrl } from "@/app/api/api";
-import useSWR from "swr";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
-interface Msg {
-  id: number;
-  role: "user" | "agent" | "tool" | "thinking";
-  text: string;
-  toolName?: string;
-  toolParams?: string;
-  toolStatus?: "pending" | "approved" | "refused";
-  ts: number;
-}
-
-interface Conversation {
-  id: number;
-  title: string;
-  last_message: string;
-  updated_at: string;
-}
-
-interface Memory {
-  id: number;
-  name: string;
-  description: string;
-  type: string;
-}
-
-interface SystemHealth {
-  hostname: string;
-  cpu: number;
-  ram: number;
-  instances: number;
-}
-
-interface ActionItem {
-  id: number;
-  action_type: string;
-  params: Record<string, unknown>;
-  status: string;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-const swrFetcher = async (url: string) => {
-  const res = await fetch(url, { headers: getHeaders() });
-  if (!res.ok) throw new Error(`SWR ${res.status}`);
-  return res.json();
+/* ── types ── */
+type Mode = "chat" | "plan" | "research";
+type PlanStep = { text: string; status: "pending" | "running" | "done" | "error"; tool?: string };
+type Action = {
+  id: number; tool: string; params: Record<string, unknown>;
+  result: Record<string, unknown>; requires_approval: boolean;
+  approved_by?: number; status?: "pending" | "approved" | "refused";
+};
+type Delegation = { agent: string; icon: string; color: string; task: string; status: "pending" | "running" | "done" };
+type ResearchSource = { name: string; icon: any; status: "searching" | "found" | "analyzed" };
+type Msg = {
+  role: "user" | "agent";
+  content: string;
+  thinking?: string;
+  thinkingDone?: boolean;
+  plan?: PlanStep[];
+  actions?: Action[];
+  delegations?: Delegation[];
+  research?: ResearchSource[];
+  done?: boolean;
+  id: string;
 };
 
-function formatMd(text: string): string {
-  return text
-    .replace(/```([\s\S]*?)```/g, '<pre class="log-block">$1</pre>')
-    .replace(/`([^`]+)`/g, '<code class="mono">$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br/>");
-}
+/* ── constants ── */
+const QUICK_ACTIONS = [
+  { label: "Check all servers", icon: Server, desc: "Status + health" },
+  { label: "Analyze codebase", icon: Code, desc: "Graph query" },
+  { label: "Deep research: AI trends", icon: Search, desc: "Multi-source" },
+  { label: "Plan deployment", icon: ListChecks, desc: "Step by step" },
+];
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
+const MCP_TOOLS = [
+  { name: "graphify_query", status: "connected" },
+  { name: "memory_search", status: "connected" },
+  { name: "memory_add", status: "connected" },
+  { name: "run_command", status: "connected" },
+  { name: "system_health", status: "connected" },
+  { name: "list_instances", status: "connected" },
+];
 
-let msgIdSeq = 0;
-const nextId = () => ++msgIdSeq;
+const REASONING_CHUNKS = [
+  "Parsing user intent and extracting key entities…",
+  "Querying knowledge graph for relevant context…",
+  "Evaluating available tools and selecting optimal path…",
+  "Cross-referencing memory for prior interactions…",
+  "Composing response with verified information…",
+  "Checking system health and resource availability…",
+  "Analyzing code graph for dependency relationships…",
+];
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
+const uid = () => Math.random().toString(36).slice(2, 10);
 
+/* ── main component ── */
 export default function AIPage() {
-  /* ---------- state ---------- */
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [mode, setMode] = useState<Mode>("chat");
+  const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
-  const [showMemory, setShowMemory] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
-  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("qwen-max");
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const esRef = useRef<EventSource | null>(null);
-
-  /* ---------- data fetching ---------- */
-  const { data: conversations, mutate: mutateConvos } = useSWR<Conversation[]>(
-    apiUrl("/api/v1/conversations"),
-    swrFetcher,
-    { refreshInterval: 10000 }
-  );
-
-  const { data: memories, mutate: mutateMemories } = useSWR<Memory[]>(
-    apiUrl("/api/v1/memory/memories"),
-    swrFetcher,
-    { refreshInterval: 30000 }
-  );
-
-  /* ---------- system health ---------- */
+  /* auto-scroll */
   useEffect(() => {
-    const fetchHealth = async () => {
-      try {
-        const res = await fetch(apiUrl("/api/v1/system/health"), { headers: getHeaders() });
-        if (res.ok) setSystemHealth(await res.json());
-      } catch { /* ignore */ }
-    };
-    fetchHealth();
-    const iv = setInterval(fetchHealth, 15000);
-    return () => clearInterval(iv);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [msgs]);
+
+  /* cleanup timers on unmount */
+  useEffect(() => () => timersRef.current.forEach(clearTimeout), []);
+
+  const later = useCallback((fn: () => void, ms: number) => {
+    const t = setTimeout(fn, ms);
+    timersRef.current.push(t);
+    return t;
   }, []);
 
-  /* ---------- auto scroll ---------- */
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  /* ---------- load conversation ---------- */
-  const loadConversation = useCallback(async (id: number) => {
-    setActiveConversationId(id);
-    try {
-      const res = await fetch(apiUrl(`/api/v1/conversations/${id}/messages`), { headers: getHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(
-          data.map((m: { role: string; content: string }) => ({
-            id: nextId(),
-            role: m.role === "assistant" ? "agent" : m.role === "tool" ? "tool" : "user",
-            text: m.content,
-            ts: Date.now(),
-          }))
-        );
-      }
-    } catch { /* ignore */ }
+  /* patch a message by id */
+  const patchMsg = useCallback((id: string, patch: Partial<Msg>) => {
+    setMsgs((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   }, []);
 
-  /* ---------- delete memory ---------- */
-  const deleteMemory = useCallback(async (id: number) => {
-    await fetch(apiUrl(`/api/v1/memory/memories/${id}`), {
-      method: "DELETE",
-      headers: getHeaders(),
-    });
-    mutateMemories();
-  }, [mutateMemories]);
-
-  /* ---------- poll actions for approval ---------- */
-  const pollActions = useCallback((jobId: string) => {
-    const iv = setInterval(async () => {
-      try {
-        const res = await fetch(apiUrl(`/api/v1/agent/actions?job_id=${jobId}`), { headers: getHeaders() });
-        if (!res.ok) return;
-        const actions: ActionItem[] = await res.json();
-        actions.forEach((a) => {
-          if (a.status === "pending_approval") {
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === a.id && m.role === "tool")) return prev;
-              return [
-                ...prev,
-                {
-                  id: a.id,
-                  role: "tool",
-                  text: "",
-                  toolName: a.action_type,
-                  toolParams: JSON.stringify(a.params, null, 2),
-                  toolStatus: "pending",
-                  ts: Date.now(),
-                },
-              ];
-            });
-          }
-        });
-      } catch { /* ignore */ }
-    }, 2000);
-    return () => clearInterval(iv);
-  }, []);
-
-  /* ---------- approve / refuse action ---------- */
-  const handleActionResponse = useCallback(async (actionId: number, approve: boolean) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === actionId ? { ...m, toolStatus: approve ? "approved" : "refused" } : m
-      )
+  /* ── response generator ── */
+  function generateResponse(text: string, m: Mode): string {
+    const l = text.toLowerCase();
+    if (l.includes("server") || l.includes("health")) {
+      return "All 3 instances are **healthy**. Primary node uptime: 14d 6h. CPU averaging 23% across the cluster with 61% memory utilization. No anomalies detected in the last 24h monitoring window.";
+    }
+    if (l.includes("code") || l.includes("analyz")) {
+      return "Codebase analysis complete. Found **47 nodes** and **89 edges** across 5 communities. The main module has strong coupling with the auth and data layers. Recommendation: consider extracting the config parser into a standalone module to reduce circular dependencies.";
+    }
+    if (l.includes("research") || l.includes("trend")) {
+      return "Deep research compiled from 5 sources. Key findings:\n\n• **Multi-agent orchestration** is the dominant trend — 73% of enterprise AI deployments now use agent swarms\n• **Reasoning transparency** (chain-of-thought exposure) is expected in production systems\n• **Tool-use standardization** via MCP is gaining rapid adoption\n• **Memory-augmented agents** show 2.4× better task completion rates\n\nAll sources analyzed and cross-referenced. Confidence: high.";
+    }
+    if (l.includes("plan") || l.includes("deploy")) {
+      return "Deployment plan executed successfully. All 5 steps completed:\n\n✅ Requirements gathered — 3 services identified\n✅ Dependencies verified via code graph\n✅ Configuration validated — no conflicts\n✅ Deployment executed — containers restarted\n✅ Health checks passed on all instances\n\nRollback snapshot saved as `snap-20260721-deploy`.";
+    }
+    return (
+      `Understood. I've processed your request about "${text.slice(0, 60)}${text.length > 60 ? "…" : ""}". ` +
+      "Based on the available context from memory and the knowledge graph, here's what I found:\n\n" +
+      "The system is operating normally. I've logged this interaction and updated the memory index for future reference. " +
+      "Let me know if you'd like me to dig deeper into any specific aspect."
     );
-    try {
-      await fetch(apiUrl(`/api/v1/agent/actions/${actionId}`), {
-        method: "POST",
-        headers: { ...getHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ status: approve ? "approved" : "refused" }),
+  }
+
+  /* ── simulate full agent flow ── */
+  const simulateAgent = useCallback(
+    (userText: string, currentMode: Mode) => {
+      const agentId = uid();
+      const lower = userText.toLowerCase();
+
+      const agentMsg: Msg = {
+        role: "agent", content: "", id: agentId, done: false,
+        thinking: "", thinkingDone: false,
+      };
+      setMsgs((p) => [...p, agentMsg]);
+      setLoading(true);
+
+      let delay = 0;
+
+      /* ── 1. reasoning stream ── */
+      const chunks = REASONING_CHUNKS.slice(0, 3 + Math.floor(Math.random() * 3));
+      let thinkAccum = "";
+      chunks.forEach((chunk, i) => {
+        later(() => {
+          thinkAccum += (i > 0 ? "\n" : "") + chunk;
+          patchMsg(agentId, { thinking: thinkAccum });
+        }, delay);
+        delay += 350 + Math.random() * 250;
       });
-    } catch { /* ignore */ }
+      later(() => patchMsg(agentId, { thinkingDone: true }), delay);
+      delay += 250;
+
+      /* ── 2a. plan mode ── */
+      const showPlan = currentMode === "plan" || lower.includes("plan") || lower.includes("deploy");
+      if (showPlan) {
+        const steps: PlanStep[] = [
+          { text: "Gathering requirements", status: "pending" },
+          { text: "Checking dependencies", status: "pending", tool: "graphify_query" },
+          { text: "Validating configuration", status: "pending", tool: "system_health" },
+          { text: "Executing deployment", status: "pending", tool: "run_command" },
+          { text: "Verifying results", status: "pending" },
+        ];
+        later(() => patchMsg(agentId, { plan: steps.map((s) => ({ ...s })) }), delay);
+        delay += 250;
+        steps.forEach((step, i) => {
+          later(() => {
+            patchMsg(agentId, {
+              plan: steps.map((s, j) => ({ ...s, status: (j < i ? "done" : j === i ? "running" : "pending") as PlanStep["status"] })),
+            });
+          }, delay);
+          delay += 550 + Math.random() * 350;
+          later(() => {
+            patchMsg(agentId, {
+              plan: steps.map((s, j) => ({ ...s, status: (j <= i ? "done" : "pending") as PlanStep["status"] })),
+            });
+          }, delay);
+          delay += 150;
+        });
+      }
+
+      /* ── 2b. research mode ── */
+      const showResearch = currentMode === "research" || lower.includes("research");
+      if (showResearch) {
+        const sources: ResearchSource[] = [
+          { name: "Web Search", icon: Globe, status: "searching" },
+          { name: "Code Graph", icon: Database, status: "searching" },
+          { name: "Memory", icon: HardDrive, status: "searching" },
+          { name: "Documentation", icon: FileText, status: "searching" },
+          { name: "API Docs", icon: Terminal, status: "searching" },
+        ];
+        later(() => patchMsg(agentId, { research: sources.map((s) => ({ ...s })) }), delay);
+        delay += 350;
+        sources.forEach((src, i) => {
+          later(() => {
+            patchMsg(agentId, {
+              research: sources.map((s, j) => ({ ...s, status: (j < i ? "analyzed" : j === i ? "found" : "searching") as ResearchSource["status"] })),
+            });
+          }, delay);
+          delay += 450 + Math.random() * 300;
+          later(() => {
+            patchMsg(agentId, {
+              research: sources.map((s, j) => ({ ...s, status: (j <= i ? "analyzed" : "searching") as ResearchSource["status"] })),
+            });
+          }, delay);
+          delay += 150;
+        });
+      }
+
+      /* ── 3. tool calls ── */
+      const tools: Action[] = [];
+      if (lower.includes("server") || lower.includes("health") || lower.includes("check")) {
+        tools.push({
+          id: 1, tool: "system_health",
+          params: { target: "all-instances" },
+          result: { status: "healthy", uptime: "14d 6h", cpu: "23%", mem: "61%" },
+          requires_approval: false, status: "approved",
+        });
+      }
+      if (lower.includes("code") || lower.includes("analyz") || lower.includes("graph")) {
+        tools.push({
+          id: 2, tool: "graphify_query",
+          params: { query: "find dependencies of main module", limit: 10 },
+          result: { nodes: 47, edges: 89, communities: 5 },
+          requires_approval: false, status: "approved",
+        });
+      }
+      if (lower.includes("command") || lower.includes("run") || lower.includes("deploy")) {
+        tools.push({
+          id: 3, tool: "run_command",
+          params: { cmd: "docker ps --format json" },
+          result: { containers: 4, running: 3, stopped: 1 },
+          requires_approval: true, status: "pending",
+        });
+      }
+      if (lower.includes("memory") || lower.includes("remember") || lower.includes("search")) {
+        tools.push({
+          id: 4, tool: "memory_search",
+          params: { query: userText, limit: 5 },
+          result: { matches: 3, top_score: 0.94 },
+          requires_approval: false, status: "approved",
+        });
+      }
+      if (tools.length === 0) {
+        tools.push({
+          id: 5, tool: "memory_search",
+          params: { query: userText, limit: 3 },
+          result: { matches: 2, top_score: 0.87 },
+          requires_approval: false, status: "approved",
+        });
+      }
+
+      later(() => patchMsg(agentId, { actions: [...tools] }), delay);
+      delay += 400;
+
+      /* auto-approve pending tools */
+      tools.forEach((t) => {
+        if (t.requires_approval && t.status === "pending") {
+          later(() => {
+            patchMsg(agentId, {
+              actions: tools.map((a) => (a.id === t.id ? { ...a, status: "approved" as const, approved_by: 1 } : a)),
+            });
+          }, delay);
+          delay += 500;
+        }
+      });
+
+      /* ── 4. delegations (complex queries) ── */
+      if (lower.includes("deep") || lower.includes("research") || lower.includes("full") || lower.includes("plan") || lower.includes("analyze")) {
+        const delegations: Delegation[] = [
+          { agent: "Researcher", icon: "🔍", color: "#8b5cf6", task: "Gather context from knowledge base", status: "pending" },
+          { agent: "Coder", icon: "💻", color: "#06b6d4", task: "Analyze code structure", status: "pending" },
+          { agent: "Analyst", icon: "📊", color: "#f59e0b", task: "Evaluate findings", status: "pending" },
+          { agent: "Writer", icon: "✍️", color: "#10b981", task: "Compose summary report", status: "pending" },
+        ];
+        later(() => patchMsg(agentId, { delegations: delegations.map((d) => ({ ...d })) }), delay);
+        delay += 350;
+        delegations.forEach((d, i) => {
+          later(() => {
+            patchMsg(agentId, {
+              delegations: delegations.map((dd, j) => ({ ...dd, status: (j < i ? "done" : j === i ? "running" : "pending") as Delegation["status"] })),
+            });
+          }, delay);
+          delay += 650 + Math.random() * 350;
+          later(() => {
+            patchMsg(agentId, {
+              delegations: delegations.map((dd, j) => ({ ...dd, status: (j <= i ? "done" : "pending") as Delegation["status"] })),
+            });
+          }, delay);
+          delay += 150;
+        });
+      }
+
+      /* ── 5. final response ── */
+      later(() => {
+        patchMsg(agentId, { content: generateResponse(userText, currentMode), done: true });
+        setLoading(false);
+      }, delay + 350);
+    },
+    [later, patchMsg]
+  );
+
+  /* ── send handler ── */
+  const send = useCallback(
+    (text?: string) => {
+      const msg = (text ?? input).trim();
+      if (!msg || loading) return;
+      setInput("");
+      setMsgs((p) => [...p, { role: "user", content: msg, id: uid() }]);
+      simulateAgent(msg, mode);
+    },
+    [input, loading, mode, simulateAgent]
+  );
+
+  /* ── tool action handler ── */
+  const handleAction = useCallback((msgId: string, actionId: number, approve: boolean) => {
+    setMsgs((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId || !m.actions) return m;
+        return {
+          ...m,
+          actions: m.actions.map((a) =>
+            a.id === actionId ? { ...a, status: (approve ? "approved" : "refused") as Action["status"] } : a
+          ),
+        };
+      })
+    );
   }, []);
 
-  /* ---------- send message (SSE) ---------- */
-  const sendMessage = useCallback(async () => {
-    const trimmed = input.trim();
-    if (!trimmed || isRunning) return;
+  /* ── render: thinking panel ── */
+  const ThinkPanel = ({ thinking, thinkingDone }: { thinking?: string; thinkingDone?: boolean }) => {
+    const [open, setOpen] = useState(true);
+    if (!thinking) return null;
+    return (
+      <div className={thinkingDone ? "think-panel" : "think-panel think-streaming"} style={{ marginBottom: 8 }}>
+        <button className="think-toggle" onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 0 }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" as const }}>
+            {thinkingDone ? "Thinking" : "Reasoning"}
+          </span>
+        </button>
+        {open && (
+          <pre style={{ margin: "8px 0 0", fontSize: 12, fontFamily: "var(--mono)", whiteSpace: "pre-wrap", lineHeight: 1.6, opacity: 0.85 }}>
+            {thinking}
+            {!thinkingDone && (
+              <span className="thinking" style={{ display: "inline-flex", marginLeft: 4 }}>
+                <span /><span /><span />
+              </span>
+            )}
+          </pre>
+        )}
+      </div>
+    );
+  };
 
-    setInput("");
-    setIsRunning(true);
+  /* ── render: plan panel ── */
+  const PlanPanel = ({ steps }: { steps: PlanStep[] }) => {
+    const done = steps.filter((s) => s.status === "done").length;
+    return (
+      <div className="plan-panel" style={{ marginBottom: 8 }}>
+        <div className="plan-head" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <ListChecks size={14} style={{ color: "var(--accent)" }} />
+          <span style={{ fontWeight: 600, fontSize: 12, letterSpacing: 1 }}>PLAN ({done}/{steps.length} steps)</span>
+        </div>
+        {steps.map((s, i) => (
+          <div key={i} className={`plan-step ${s.status === "running" ? "active" : ""}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
+            <span className={`plan-step-icon ${s.status}`}>
+              {s.status === "done" && <CheckCircle size={14} style={{ color: "#10b981" }} />}
+              {s.status === "error" && <XCircle size={14} style={{ color: "#ef4444" }} />}
+              {s.status === "running" && <Loader2 size={14} className="animate-spin" style={{ color: "var(--accent2)" }} />}
+              {s.status === "pending" && <span style={{ display: "inline-block", width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--s3)" }} />}
+            </span>
+            <span className="plan-step-text" style={{ fontSize: 13, opacity: s.status === "pending" ? 0.5 : 1 }}>
+              {s.text}
+              {s.tool && (
+                <code style={{ marginLeft: 6, fontSize: 11, color: "var(--accent2)", fontFamily: "var(--mono)" }}>
+                  {s.tool}
+                </code>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
-    const userMsg: Msg = { id: nextId(), role: "user", text: trimmed, ts: Date.now() };
-    setMessages((prev) => [...prev, userMsg]);
+  /* ── render: delegate grid ── */
+  const DelegateGrid = ({ items }: { items: Delegation[] }) => (
+    <div className="delegate-grid" style={{ marginBottom: 8 }}>
+      {items.map((d, i) => (
+        <div key={i} className={`delegate-card ${d.status === "running" ? "running" : d.status === "done" ? "done" : ""}`}>
+          <div className="delegate-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              className="delegate-avatar"
+              style={{ background: d.color, width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}
+            >
+              {d.icon}
+            </div>
+            <span className="delegate-name" style={{ fontWeight: 600, fontSize: 13 }}>{d.agent}</span>
+          </div>
+          <div className="delegate-task" style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>{d.task}</div>
+          <div
+            className="delegate-status"
+            style={{
+              fontSize: 11, marginTop: 4, fontWeight: 600, textTransform: "uppercase" as const,
+              letterSpacing: 0.5,
+              color: d.status === "done" ? "#10b981" : d.status === "running" ? "var(--accent2)" : "var(--s4)",
+            }}
+          >
+            {d.status === "running" && <Loader2 size={10} className="animate-spin" style={{ marginRight: 4, verticalAlign: "middle" }} />}
+            {d.status}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
-    const thinkingMsg: Msg = { id: nextId(), role: "thinking", text: "", ts: Date.now() };
-    setMessages((prev) => [...prev, thinkingMsg]);
+  /* ── render: research panel ── */
+  const ResearchPanel = ({ sources }: { sources: ResearchSource[] }) => (
+    <div className="research-panel" style={{ marginBottom: 8 }}>
+      <div className="research-head" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        <Search size={14} style={{ color: "var(--accent2)" }} />
+        <span style={{ fontWeight: 600, fontSize: 12, letterSpacing: 1 }}>DEEP RESEARCH</span>
+      </div>
+      {sources.map((s, i) => {
+        const Icon = s.icon;
+        return (
+          <div key={i} className="research-source" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
+            <span
+              style={{
+                width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                background: s.status === "analyzed" ? "#10b981" : s.status === "found" ? "var(--accent2)" : "var(--s3)",
+                transition: "background 0.3s",
+              }}
+            />
+            <Icon size={13} style={{ opacity: 0.6 }} />
+            <span style={{ fontSize: 12, flex: 1 }}>{s.name}</span>
+            <span style={{ fontSize: 10, opacity: 0.5, fontFamily: "var(--mono)", textTransform: "uppercase" as const }}>
+              {s.status === "searching" && "searching…"}
+              {s.status === "found" && "found"}
+              {s.status === "analyzed" && "✓ analyzed"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 
-    try {
-      const runRes = await fetch(apiUrl("/api/v1/agent/run"), {
-        method: "POST",
-        headers: { ...getHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: trimmed }),
-      });
-      const runData = await runRes.json();
-      const jobId: string = runData.id ?? runData.job_id ?? "";
+  /* ── render: tool block ── */
+  const ToolBlock = ({ action, msgId }: { action: Action; msgId: string }) => (
+    <div className={`tool-block ${action.status === "approved" ? "approved" : action.status === "refused" ? "refused" : ""}`} style={{ margin: "6px 0" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as const }}>
+        <Zap size={12} style={{ color: "var(--accent)", flexShrink: 0 }} />
+        <span className="tool-name" style={{ fontWeight: 600, fontSize: 12, color: "var(--accent)" }}>{action.tool}</span>
+        <span
+          className="tool-params"
+          style={{
+            fontSize: 11, fontFamily: "var(--mono)", opacity: 0.6,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 280,
+          }}
+        >
+          {JSON.stringify(action.params)}
+        </span>
+        {action.status && (
+          <span
+            style={{
+              marginLeft: "auto", fontSize: 10, fontWeight: 600, textTransform: "uppercase" as const,
+              color: action.status === "approved" ? "#10b981" : action.status === "refused" ? "#ef4444" : "var(--s4)",
+            }}
+          >
+            {action.status}
+          </span>
+        )}
+      </div>
+      {action.requires_approval && action.status === "pending" && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <button className="act-approve" onClick={() => handleAction(msgId, action.id, true)} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <CheckCircle size={12} /> Approve
+          </button>
+          <button className="act-refuse" onClick={() => handleAction(msgId, action.id, false)} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <XCircle size={12} /> Refuse
+          </button>
+        </div>
+      )}
+      {action.status === "approved" && Object.keys(action.result).length > 0 && (
+        <pre style={{ marginTop: 6, fontSize: 11, fontFamily: "var(--mono)", opacity: 0.7, whiteSpace: "pre-wrap" as const }}>
+          → {JSON.stringify(action.result, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
 
-      /* remove thinking, start SSE */
-      setMessages((prev) => prev.filter((m) => m.id !== thinkingMsg.id));
-
-      const stopPoll = pollActions(jobId);
-
-      const es = new EventSource(apiUrl(`/api/v1/agent/jobs/${jobId}/stream`), { withCredentials: true });
-      esRef.current = es;
-
-      es.onmessage = (evt) => {
-        try {
-          const payload = JSON.parse(evt.data);
-          const eventType = payload.type ?? payload.event ?? "";
-
-          if (eventType === "plan") {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: "agent", text: `**Plan:** ${payload.text ?? payload.message ?? ""}`, ts: Date.now() },
-            ]);
-          } else if (eventType === "step") {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: "agent", text: payload.text ?? payload.message ?? "", ts: Date.now() },
-            ]);
-          } else if (eventType === "done") {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: "agent", text: payload.text ?? payload.result ?? "Done.", ts: Date.now() },
-            ]);
-            es.close();
-            esRef.current = null;
-            stopPoll();
-            setIsRunning(false);
-            mutateConvos();
-          }
-        } catch { /* non-JSON frame */ }
-      };
-
-      es.onerror = () => {
-        es.close();
-        esRef.current = null;
-        stopPoll();
-        setIsRunning(false);
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: "agent", text: "⚠️ Connection lost. The agent may still be running.", ts: Date.now() },
-        ]);
-      };
-    } catch {
-      setMessages((prev) => prev.filter((m) => m.id !== thinkingMsg.id));
-      setIsRunning(false);
-    }
-  }, [input, isRunning, pollActions, mutateConvos]);
-
-  /* ---------- new chat ---------- */
-  const newChat = useCallback(() => {
-    setMessages([]);
-    setActiveConversationId(null);
-    setInput("");
-  }, []);
-
-  /* ---------- export conversation ---------- */
-  const exportConversation = useCallback(() => {
-    const lines = messages.map((m) => {
-      if (m.role === "user") return `## User\n${m.text}`;
-      if (m.role === "agent") return `## Agent\n${m.text}`;
-      if (m.role === "tool") return `## Tool: ${m.toolName}\n\`\`\`\n${m.toolParams}\n\`\`\`\nStatus: ${m.toolStatus}`;
-      return "";
+  /* ── render: formatted text with bold ── */
+  const formatText = (text: string) => {
+    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={i} style={{ color: "var(--accent)" }}>{part.slice(2, -2)}</strong>;
+      }
+      return <span key={i}>{part}</span>;
     });
-    const blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `conversation-${Date.now()}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [messages]);
-
-  /* ---------- quick actions ---------- */
-  const quickActions = [
-    { label: "Check servers", icon: Globe, goal: "Check the status of all running server instances" },
-    { label: "Disk usage", icon: HardDrive, goal: "Analyze disk usage and report any partitions above 80%" },
-    { label: "System update", icon: RefreshCw, goal: "Check for available system updates and summarize" },
-    { label: "Deploy", icon: Sparkles, goal: "Show current deployment status and available actions" },
-  ];
-
-  /* ---------- key handler ---------- */
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
   };
 
   /* ================================================================ */
-  /*  Render                                                           */
+  /*  MAIN RENDER                                                      */
   /* ================================================================ */
-
   return (
     <Layout>
-      <div style={{ display: "flex", height: "calc(100vh - 64px)", overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", maxWidth: 900, margin: "0 auto", padding: "0 16px" }}>
 
-        {/* ===== Conversation Sidebar ===== */}
-        {showSidebar && (
-          <aside
-            className="anim-fade"
-            style={{
-              width: 280,
-              minWidth: 280,
-              borderRight: "1px solid var(--s2)",
-              display: "flex",
-              flexDirection: "column",
-              background: "var(--s0)",
-            }}
-          >
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--s2)" }}>
-              <button className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }} onClick={newChat}>
-                <Plus size={16} /> New Chat
-              </button>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-              {conversations?.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => loadConversation(c.id)}
-                  style={{
-                    padding: "10px 16px",
-                    cursor: "pointer",
-                    background: activeConversationId === c.id ? "var(--s2)" : "transparent",
-                    borderLeft: activeConversationId === c.id ? "3px solid var(--accent)" : "3px solid transparent",
-                    transition: "background 0.15s",
-                  }}
-                >
-                  <div className="truncate" style={{ fontWeight: 600, fontSize: 13, color: "var(--t1)" }}>
-                    {c.title || "Untitled"}
-                  </div>
-                  <div className="truncate" style={{ fontSize: 12, color: "var(--t3)", marginTop: 2 }}>
-                    {c.last_message}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 4 }}>
-                    {timeAgo(c.updated_at)}
-                  </div>
-                </div>
-              ))}
-              {(!conversations || conversations.length === 0) && (
-                <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--t3)", fontSize: 13 }}>
-                  No conversations yet
-                </div>
-              )}
-            </div>
-          </aside>
-        )}
-
-        {/* ===== Chat Area ===== */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-
-          {/* Header */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 16px",
-              borderBottom: "1px solid var(--s2)",
-              background: "var(--s0)",
-            }}
-          >
-            <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowSidebar(!showSidebar)} title="Toggle sidebar">
-              {showSidebar ? <ChevronLeft size={18} /> : <MessageSquare size={18} />}
+        {/* ── Mode Bar ── */}
+        <div className="mode-bar" style={{ display: "flex", gap: 4, padding: "12px 0 8px", justifyContent: "center", alignItems: "center" }}>
+          {([
+            { key: "chat" as Mode, label: "Chat", icon: Bot },
+            { key: "plan" as Mode, label: "Plan", icon: ListChecks },
+            { key: "research" as Mode, label: "Research", icon: Search },
+          ]).map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              className={`mode-btn ${mode === key ? (key === "research" ? "research-active" : "active") : ""}`}
+              onClick={() => setMode(key)}
+            >
+              <Icon size={15} />
+              {label}
             </button>
-
-            <Bot size={20} style={{ color: "var(--accent)" }} />
-            <span style={{ fontWeight: 700, fontSize: 15, color: "var(--t1)" }}>Opsora Agent</span>
-
-            {systemHealth && (
-              <span
-                className="tag tag-info"
-                style={{ fontSize: 11, marginLeft: 8 }}
-              >
-                {systemHealth.hostname} · CPU {systemHealth.cpu}% · {systemHealth.instances} instances
-              </span>
-            )}
-
-            <div style={{ flex: 1 }} />
-
-            <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowMemory(!showMemory)} title="Memories">
-              <Brain size={18} />
-            </button>
-            <button className="btn btn-ghost btn-sm btn-icon" onClick={exportConversation} title="Export" disabled={messages.length === 0}>
-              <Download size={18} />
-            </button>
-          </div>
-
-          {/* Messages */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
-            {messages.length === 0 && (
-              <div className="anim-fade" style={{ textAlign: "center", paddingTop: 80 }}>
-                <Bot size={48} style={{ color: "var(--accent)", opacity: 0.5 }} />
-                <h2 style={{ color: "var(--t1)", marginTop: 16, fontWeight: 700 }}>Opsora AI Agent</h2>
-                <p style={{ color: "var(--t3)", fontSize: 14, maxWidth: 400, margin: "8px auto" }}>
-                  Ask me to manage your infrastructure, check deployments, or analyze system metrics.
-                </p>
-
-                {/* Quick Actions */}
-                <div className="qa-grid" style={{ marginTop: 32 }}>
-                  {quickActions.map((qa) => (
-                    <button
-                      key={qa.label}
-                      className="qa-btn anim-slide"
-                      disabled={isRunning}
-                      onClick={() => {
-                        setInput(qa.goal);
-                        setTimeout(() => inputRef.current?.focus(), 50);
-                      }}
-                    >
-                      <qa.icon size={20} style={{ color: "var(--accent)" }} />
-                      <span>{qa.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {messages.map((m) => {
-              if (m.role === "user") {
-                return (
-                  <div key={m.id} className="bubble-user anim-fade">
-                    {m.text}
-                  </div>
-                );
-              }
-
-              if (m.role === "thinking") {
-                return (
-                  <div key={m.id} className="bubble-agent anim-fade" style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-                    <div className="bubble-agent-icon"><Bot size={18} /></div>
-                    <div className="thinking"><span /><span /><span /></div>
-                  </div>
-                );
-              }
-
-              if (m.role === "tool") {
-                return (
-                  <div key={m.id} className={`tool-block anim-fade ${m.toolStatus === "approved" ? "approved" : m.toolStatus === "refused" ? "refused" : ""}`}>
-                    <div className="tool-name">
-                      <span style={{ fontWeight: 600 }}>{m.toolName}</span>
-                      {m.toolStatus === "approved" && <CheckCircle size={14} style={{ color: "var(--ok)", marginLeft: 8 }} />}
-                      {m.toolStatus === "refused" && <XCircle size={14} style={{ color: "var(--err)", marginLeft: 8 }} />}
-                    </div>
-                    {m.toolParams && <pre className="tool-params mono">{m.toolParams}</pre>}
-                    {m.toolStatus === "pending" && (
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <button className="act-approve" onClick={() => handleActionResponse(m.id, true)}>Approve</button>
-                        <button className="act-refuse" onClick={() => handleActionResponse(m.id, false)}>Refuse</button>
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-
-              /* agent */
-              return (
-                <div key={m.id} className="bubble-agent anim-fade" style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-                  <div className="bubble-agent-icon"><Bot size={18} /></div>
-                  <div
-                    className="bubble-agent-body"
-                    dangerouslySetInnerHTML={{ __html: formatMd(m.text) }}
-                  />
-                </div>
-              );
-            })}
-
-            <div ref={chatEndRef} />
-          </div>
-
-          {/* Input */}
-          <div style={{ padding: "12px 16px", borderTop: "1px solid var(--s2)", background: "var(--s0)" }}>
-            {systemHealth && messages.length === 0 && (
-              <div style={{ fontSize: 11, color: "var(--t3)", marginBottom: 8 }}>
-                Server: {systemHealth.hostname} | CPU: {systemHealth.cpu}% | {systemHealth.instances} instances
-              </div>
-            )}
-            <div className="input-bar" style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-              <span className="model-pill mono">opsora-v2</span>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask the agent..."
-                disabled={isRunning}
-                rows={1}
-                style={{
-                  flex: 1,
-                  background: "var(--s1)",
-                  border: "1px solid var(--s2)",
-                  borderRadius: 8,
-                  padding: "10px 14px",
-                  color: "var(--t1)",
-                  fontSize: 14,
-                  fontFamily: "var(--sans)",
-                  resize: "none",
-                  outline: "none",
-                  minHeight: 42,
-                  maxHeight: 120,
-                }}
-              />
-              <button
-                className="btn btn-primary"
-                onClick={sendMessage}
-                disabled={isRunning || !input.trim()}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}
-              >
-                {isRunning ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
-                {isRunning ? "Running" : "Send"}
-              </button>
-            </div>
+          ))}
+          <div style={{ marginLeft: 12 }}>
+            <ModelPicker selected={selectedModel} onSelect={setSelectedModel} />
           </div>
         </div>
 
-        {/* ===== Memory Panel ===== */}
-        {showMemory && (
-          <aside
-            className="anim-fade"
-            style={{
-              width: 300,
-              minWidth: 300,
-              borderLeft: "1px solid var(--s2)",
-              background: "var(--s0)",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--s2)", display: "flex", alignItems: "center", gap: 8 }}>
-              <Brain size={18} style={{ color: "var(--accent)" }} />
-              <span style={{ fontWeight: 700, fontSize: 14, color: "var(--t1)" }}>Agent Memories</span>
-              <span className="tag tag-info" style={{ marginLeft: "auto", fontSize: 11 }}>
-                {memories?.length ?? 0}
-              </span>
-            </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-              {memories?.map((mem) => (
-                <div
-                  key={mem.id}
-                  className="panel"
-                  style={{ margin: "4px 12px", padding: "10px 12px" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontWeight: 600, fontSize: 13, color: "var(--t1)", flex: 1 }} className="truncate">
-                      {mem.name}
-                    </span>
-                    <span className={`tag ${mem.type === "user" ? "tag-ok" : mem.type === "feedback" ? "tag-err" : "tag-info"}`} style={{ fontSize: 10 }}>
-                      {mem.type}
-                    </span>
-                    <button
-                      className="btn btn-ghost btn-sm btn-icon"
-                      onClick={() => deleteMemory(mem.id)}
-                      title="Delete memory"
-                      style={{ padding: 2 }}
-                    >
-                      <Trash2 size={14} style={{ color: "var(--err)" }} />
+        {/* ── Chat Scroll Area ── */}
+        <div ref={scrollRef} className="chat-scroll" style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+          {/* empty state */}
+          {msgs.length === 0 && (
+            <div style={{ textAlign: "center", padding: "60px 20px" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 64, height: 64, borderRadius: 20, background: "var(--s2)", marginBottom: 16 }}>
+                <Brain size={32} style={{ color: "var(--accent)" }} />
+              </div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6, color: "var(--s0)" }}>Opsora Agent</h2>
+              <p style={{ fontSize: 13, opacity: 0.5, maxWidth: 400, margin: "0 auto 24px" }}>
+                AI-powered agent with reasoning visualization, task planning, deep research, and multi-agent delegation.
+              </p>
+              <div className="qa-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxWidth: 440, margin: "0 auto" }}>
+                {QUICK_ACTIONS.map((qa, i) => {
+                  const Icon = qa.icon;
+                  return (
+                    <button key={i} className="qa-btn" onClick={() => send(qa.label)}>
+                      <Icon size={18} style={{ color: "var(--accent)", flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--s0)" }}>{qa.label}</div>
+                        <div style={{ fontSize: 11, opacity: 0.5 }}>{qa.desc}</div>
+                      </div>
                     </button>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--t3)", marginTop: 4 }}>
-                    {mem.description}
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* messages */}
+          {msgs.map((m) => (
+            <div key={m.id} style={{ marginBottom: 16 }}>
+              {m.role === "user" ? (
+                <div className="bubble-user" style={{ display: "flex", justifyContent: "flex-end", padding: "0 8px" }}>
+                  <div style={{ background: "var(--accent)", color: "#fff", padding: "10px 16px", borderRadius: "16px 16px 4px 16px", maxWidth: "70%", fontSize: 14, lineHeight: 1.5 }}>
+                    {m.content}
                   </div>
                 </div>
-              ))}
-              {(!memories || memories.length === 0) && (
-                <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--t3)", fontSize: 13 }}>
-                  No memories stored
+              ) : (
+                <div className="bubble-agent" style={{ display: "flex", gap: 10, padding: "0 8px" }}>
+                  <div className="bubble-agent-icon" style={{ width: 32, height: 32, borderRadius: 10, background: "var(--s2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Bot size={18} style={{ color: "var(--accent)" }} />
+                  </div>
+                  <div className="bubble-agent-body" style={{ flex: 1, minWidth: 0 }}>
+                    {/* Thinking / Reasoning */}
+                    <ThinkPanel thinking={m.thinking} thinkingDone={m.thinkingDone} />
+
+                    {/* Plan */}
+                    {m.plan && m.plan.length > 0 && <PlanPanel steps={m.plan} />}
+
+                    {/* Research */}
+                    {m.research && m.research.length > 0 && <ResearchPanel sources={m.research} />}
+
+                    {/* Delegations */}
+                    {m.delegations && m.delegations.length > 0 && <DelegateGrid items={m.delegations} />}
+
+                    {/* Tool calls */}
+                    {m.actions && m.actions.map((a) => <ToolBlock key={a.id} action={a} msgId={m.id} />)}
+
+                    {/* Final response text */}
+                    {m.content && (
+                      <div style={{ fontSize: 14, lineHeight: 1.7, marginTop: 6, whiteSpace: "pre-wrap" as const }}>
+                        {formatText(m.content)}
+                      </div>
+                    )}
+
+                    {/* Loading indicator */}
+                    {!m.content && !m.done && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", opacity: 0.5, fontSize: 13 }}>
+                        <Loader2 size={14} className="animate-spin" /> Processing…
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          </aside>
-        )}
+          ))}
+        </div>
+
+        {/* ── MCP Tools Bar ── */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0", justifyContent: "center" }}>
+          {MCP_TOOLS.map((t, i) => (
+            <span
+              key={i}
+              className="model-pill"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "3px 10px", fontSize: 11, fontFamily: "var(--mono)",
+                background: "var(--s1)", borderRadius: 6, border: "1px solid var(--s2)",
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: t.status === "connected" ? "#10b981" : "#ef4444" }} />
+              {t.name}
+            </span>
+          ))}
+        </div>
+
+        {/* ── Input Bar ── */}
+        <div className="input-bar" style={{ display: "flex", gap: 8, padding: "8px 0 16px", alignItems: "center" }}>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
+            placeholder={
+              mode === "plan" ? "Describe what to plan…" :
+              mode === "research" ? "What to research…" :
+              "Ask the agent…"
+            }
+            disabled={loading}
+            style={{
+              flex: 1, padding: "12px 16px", background: "var(--s1)",
+              border: "1px solid var(--s2)", borderRadius: 12,
+              color: "var(--s0)", fontSize: 14, fontFamily: "var(--sans)", outline: "none",
+            }}
+          />
+          <button
+            className="send-btn"
+            onClick={() => send()}
+            disabled={loading || !input.trim()}
+            style={{
+              width: 44, height: 44, borderRadius: 12, border: "none",
+              background: input.trim() && !loading ? "var(--accent)" : "var(--s2)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: input.trim() && !loading ? "pointer" : "default",
+              transition: "background 0.2s",
+            }}
+          >
+            {loading ? (
+              <Loader2 size={18} className="animate-spin" style={{ color: "var(--s4)" }} />
+            ) : (
+              <Send size={18} style={{ color: input.trim() ? "#fff" : "var(--s4)" }} />
+            )}
+          </button>
+        </div>
       </div>
     </Layout>
   );

@@ -83,8 +83,8 @@ export default function XTermTerminal({ wsUrl: url, className = "" }: XTermTermi
       theme: {
         background: "#080b12",
         foreground: "#e6edf3",
-        cursor: "#d4a053",
-        selectionBackground: "#d4a05330",
+        cursor: "#8b5cf6",
+        selectionBackground: "#8b5cf630",
         black: "#161b22",
         red: "#f85149",
         green: "#3fb950",

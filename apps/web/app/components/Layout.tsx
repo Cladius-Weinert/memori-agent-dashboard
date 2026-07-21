@@ -9,6 +9,8 @@ import {
   Zap,
   Settings,
   LogOut,
+  Box,
+  Layers,
 } from "lucide-react";
 import { useAuthStore } from "@/app/stores/authStore";
 import BottomNav from "./BottomNav";
@@ -20,6 +22,8 @@ const NAV = [
   { href: "/dashboard", label: "Activity", icon: LayoutDashboard },
   { href: "/instances", label: "Instances", icon: Server },
   { href: "/commands", label: "Commands", icon: Zap },
+  { href: "/catalog", label: "Catalog", icon: Box },
+  { href: "/workspace", label: "Workspace", icon: Layers },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
