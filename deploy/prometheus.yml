@@ -1,0 +1,15 @@
+# Prometheus config
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "memori-api"
+    static_configs:
+      - targets: ["api:8000"]
+        labels: { app: "memori-api" }
+
+  - job_name: "node"
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets.json"]
+        refresh_interval: 60s

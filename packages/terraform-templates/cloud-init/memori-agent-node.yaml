@@ -1,0 +1,30 @@
+#cloud-config
+# Memori Agent Node — cloud-init user-data
+packages:
+  - docker.io
+  - docker-compose-v2
+  - prometheus-node-exporter
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - systemctl enable prometheus-node-exporter
+  - systemctl start prometheus-node-exporter
+
+users:
+  - name: memori
+    groups: sudo, docker
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ${memori_ssh_pubkey}
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+
+write_files:
+  - path: /etc/prometheus/prometheus.yml
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: 'node'
+          static_configs:
+            - targets: ['localhost:9100']

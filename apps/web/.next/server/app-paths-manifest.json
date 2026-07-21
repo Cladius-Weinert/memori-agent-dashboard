@@ -1,0 +1,12 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/agent/page": "app/agent/page.js",
+  "/ai/page": "app/ai/page.js",
+  "/commands/page": "app/commands/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/instances/[id]/page": "app/instances/[id]/page.js",
+  "/instances/page": "app/instances/page.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
+  "/settings/page": "app/settings/page.js"
+}

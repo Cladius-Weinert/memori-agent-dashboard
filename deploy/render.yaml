@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: memori-agent-api
+    env: docker
+    dockerfilePath: deploy/Dockerfile.api
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: memori-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: memori-redis
+          type: redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+    healthCheckPath: /healthz
+    numInstances: 1
+
+  - type: web
+    name: memori-agent-web
+    env: docker
+    dockerfilePath: deploy/Dockerfile.web
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://memori-agent-api.onrender.com
+    numInstances: 1
+
+  - type: worker
+    name: memori-agent-worker
+    env: docker
+    dockerfilePath: deploy/Dockerfile.api
+    command: celery -A app.workers.celery_app worker -l info
+
+  - type: redis
+    name: memori-redis
+    plan: free
+    ipAllowList: []
+
+databases:
+  - name: memori-db
+    plan: free
+    databaseType: postgres

@@ -1,0 +1,50 @@
+app = "memori-agent-dashboard"
+
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[processes]
+  web = "cd apps/web && pnpm start"
+  api = "cd apps/api && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker = "cd apps/api && celery -A app.workers.celery_app worker -l info"
+
+[env]
+  JWT_SECRET = "change-me-in-production"
+  JWT_ALGORITHM = "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES = "1440"
+  LLM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+  LLM_MODEL = "meta/llama-3.1-70b-instruct"
+  NEXT_PUBLIC_API_URL = "https://memori-agent-dashboard.fly.dev"
+
+[[services]]
+  internal_port = 3000
+  processes = ["web"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls"]
+    force_https = true
+
+[[services]]
+  internal_port = 8000
+  processes = ["api"]
+  http_checks = [{ path = "/healthz" }]
+
+  [[services.ports]]
+    port = 8080
+
+# Fly Postgres
+[[resources]]
+  name = "memori-db"
+  profile = "dedicated-cpu-1x"
+
+[resources.postgres]
+  size = "1gb"
+
+# Fly Redis (Upstash)
+[[resources]]
+  name = "memori-redis"
+  profile = "dedicated-cpu-1x"
+
+[resources.redis]
+  size = "256mb"
