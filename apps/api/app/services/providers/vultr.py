@@ -51,27 +51,3 @@ class VultrAdapter:
         r.raise_for_status()
         return {"id": instance_id, "state": "destroyed"}
 
-
-_ADAPTERS = {
-    "aws": "app.services.providers.aws.AWSAdapter",
-    "gcp": "app.services.providers.gcp.GCPAdapter",
-    "digitalocean": "app.services.providers.digitalocean.DigitalOceanAdapter",
-    "vultr": "app.services.providers.vultr.VultrAdapter",
-}
-
-
-def get_adapter(provider_type: str, **kwargs: Any) -> Any:
-    """Instantiate adapter by provider type string."""
-    if provider_type == "aws":
-        from app.services.providers.aws import AWSAdapter
-        return AWSAdapter(**kwargs)
-    if provider_type == "gcp":
-        from app.services.providers.gcp import GCPAdapter
-        return GCPAdapter(**kwargs)
-    if provider_type == "digitalocean":
-        from app.services.providers.digitalocean import DigitalOceanAdapter
-        return DigitalOceanAdapter(**kwargs)
-    if provider_type == "vultr":
-        from app.services.providers.vultr import VultrAdapter
-        return VultrAdapter(**kwargs)
-    raise ValueError(f"unknown provider type: {provider_type}")

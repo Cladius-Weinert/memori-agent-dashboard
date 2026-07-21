@@ -1,17 +1,24 @@
 """WebSocket SSH terminal bridge using asyncssh."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.security import decode_token
 from app.services.ssh_pool import ssh_pool
 
 router = APIRouter()
 
 
 @router.websocket("/{instance_id}")
-async def terminal_ws(websocket: WebSocket, instance_id: int) -> None:
+async def terminal_ws(websocket: WebSocket, instance_id: int, token: str = "") -> None:
+    payload = decode_token(token) if token else None
+    if not payload:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
     await websocket.accept()
     conn = None
     try:
@@ -31,7 +38,6 @@ async def terminal_ws(websocket: WebSocket, instance_id: int) -> None:
                     break
             await websocket.send_json({"type": "exit", "code": 0})
 
-        import asyncio
         ssh_task = asyncio.create_task(read_from_ssh())
 
         try:
@@ -54,8 +60,14 @@ async def terminal_ws(websocket: WebSocket, instance_id: int) -> None:
             except Exception:
                 pass
     except Exception as exc:
-        await websocket.send_json({"type": "exit", "code": 1, "error": str(exc)})
+        try:
+            await websocket.send_json({"type": "exit", "code": 1, "error": str(exc)})
+        except Exception:
+            pass
     finally:
         if conn:
             await ssh_pool.release(instance_id)
-            await websocket.close()
+            try:
+                await websocket.close()
+            except Exception:
+                pass

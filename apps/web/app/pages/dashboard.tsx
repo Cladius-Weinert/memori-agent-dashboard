@@ -1,79 +1,129 @@
-/* Dashboard — instance overview, stats, recent activity */
 "use client";
+
 import { useInstances } from "@/app/hooks/useApi";
-import { Server, Loader2, AlertCircle, Activity } from "lucide-react";
 import { Layout } from "@/app/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Server, Wifi, WifiOff, Cpu } from "lucide-react";
 
 export default function DashboardPage() {
   const { data: instances, error, isLoading } = useInstances();
 
+  const total = instances?.length ?? 0;
+  const online = instances?.filter((i) => i.status === "up").length ?? 0;
+  const offline = total - online;
+  const agentJobs = instances?.filter((i) => i.tags?.includes("agent")).length ?? 0;
+
   return (
     <Layout>
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+      <div className="anim-fade">
+        {/* Page header */}
+        <div className="sec-head">
+          <h1 className="sec-title">Activity Overview</h1>
+          {isLoading && <span className="tag tag-neutral">loading</span>}
+        </div>
 
-        {/* Stats cards */}
-        <div className="grid grid-cols-3 gap-3">
-          <div className="card-glass text-center">
-            <div className="text-xl md:text-2xl font-bold text-white">
-              {isLoading ? "..." : instances?.length ?? 0}
+        {/* Metrics grid */}
+        <div className="data-grid">
+          <div className="data-cell">
+            <div className="data-val">
+              {isLoading ? <span className="skel" style={{ width: 32 }} /> : total}
             </div>
-            <div className="text-xs text-slate-400 mt-1">Total</div>
+            <div className="data-label">
+              <Server size={12} /> Total Instances
+            </div>
           </div>
-          <div className="card-glass text-center">
-            <div className="text-xl md:text-2xl font-bold text-green-400">
-              {instances?.filter((i) => i.status === "up").length ?? 0}
+
+          <div className="data-cell">
+            <div className="data-val" style={{ color: "var(--ok)" }}>
+              {isLoading ? <span className="skel" style={{ width: 24 }} /> : online}
             </div>
-            <div className="text-xs text-slate-400 mt-1">Online</div>
+            <div className="data-label">
+              <Wifi size={12} /> Online
+            </div>
           </div>
-          <div className="card-glass text-center">
-            <div className="text-xl md:text-2xl font-bold text-red-400">
-              {instances?.filter((i) => i.status === "down").length ?? 0}
+
+          <div className="data-cell">
+            <div className="data-val" style={{ color: "var(--err)" }}>
+              {isLoading ? <span className="skel" style={{ width: 24 }} /> : offline}
             </div>
-            <div className="text-xs text-slate-400 mt-1">Offline</div>
+            <div className="data-label">
+              <WifiOff size={12} /> Offline
+            </div>
+          </div>
+
+          <div className="data-cell">
+            <div className="data-val" style={{ color: "var(--accent)" }}>
+              {isLoading ? <span className="skel" style={{ width: 24 }} /> : agentJobs}
+            </div>
+            <div className="data-label">
+              <Cpu size={12} /> Agent Jobs
+            </div>
           </div>
         </div>
 
         {/* Instance list */}
-        <div>
-          <h2 className="text-sm font-semibold text-slate-400 mb-3 flex items-center gap-2"><Activity size={14} /> Live Instances</h2>
-          {isLoading && (
-            <div className="flex items-center gap-2 text-slate-400">
-              <Loader2 className="animate-spin" size={16} />
-              Loading...
+        <div className="panel" style={{ marginTop: "1.5rem" }}>
+          <div className="panel-head">
+            <div className="sec-head">
+              <h2 className="sec-title">Instances</h2>
+              {total > 0 && <span className="sec-count">{total}</span>}
             </div>
-          )}
-          {error && (
-            <div className="flex items-center gap-2 text-red-400">
-              <AlertCircle size={16} />
-              {error.message}
-            </div>
-          )}
-          {instances && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {instances.map((inst) => (
-                <div
-                  key={inst.id}
-                  className="p-4 bg-slate-800/40 rounded-lg border border-slate-700/60 hover:border-brand-500/30 transition"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Server size={16} className="text-brand-500" />
-                      <span className="font-medium text-white text-sm">{inst.name}</span>
+          </div>
+
+          <div className="panel-body">
+            {/* Loading state */}
+            {isLoading && (
+              <>
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="inst-row">
+                    <span className="skel" style={{ width: 8, height: 8, borderRadius: "50%" }} />
+                    <div className="inst-meta">
+                      <span className="skel" style={{ width: 120, height: 14 }} />
+                      <span className="skel" style={{ width: 80, height: 10 }} />
                     </div>
-                    <StatusBadge status={inst.status} />
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {inst.host}:{inst.port} · {inst.ssh_user}
+                ))}
+              </>
+            )}
+
+            {/* Error state */}
+            {error && (
+              <div className="log-block" style={{ color: "var(--err)" }}>
+                ✗ {error.message}
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!isLoading && !error && instances?.length === 0 && (
+              <div className="log-block">
+                <span style={{ color: "var(--t3)" }}>
+                  $ no instances registered
+                </span>
+                <br />
+                <span style={{ color: "var(--t2)", fontSize: "0.8rem" }}>
+                  Connect your first agent via Settings → API Keys
+                </span>
+              </div>
+            )}
+
+            {/* Instance rows */}
+            {instances?.map((inst) => {
+              const isUp = inst.status === "up";
+              return (
+                <div key={inst.id} className="inst-row">
+                  <span className={`dot ${isUp ? "dot-ok dot-pulse" : "dot-err"}`} />
+                  <div className="inst-meta">
+                    <span className="inst-name">{inst.name}</span>
+                    <span className="inst-sub">
+                      {inst.host}:{inst.port}
+                      {inst.ssh_user && ` · ${inst.ssh_user}`}
+                    </span>
                   </div>
-                  <div className="mt-2 text-xs text-slate-400 truncate">
-                    {inst.tags?.join(", ")}
-                  </div>
+                  <StatusBadge status={inst.status} />
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </div>
       </div>
     </Layout>

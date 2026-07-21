@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Opsora Mark — compact icon for favicon/header -->
+  <rect width="32" height="32" rx="6" fill="#0d1117"/>
+  <path d="M16 4 L27 10 L27 22 L16 28 L5 22 L5 10 Z" stroke="#d4a053" stroke-width="1.5" fill="none" stroke-linejoin="round"/>
+  <circle cx="16" cy="16" r="3" fill="#d4a053"/>
+  <rect x="14.5" y="12" width="1.5" height="8" fill="#d4a053" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.15;0.8" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+</svg>

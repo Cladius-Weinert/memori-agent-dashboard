@@ -1,26 +1,32 @@
-/* Status badge — colored dots for instance health */
 "use client";
 
-const STATUS_MAP: Record<string, { color: string; label: string }> = {
-  up:      { color: "bg-emerald-400", label: "Online" },
-  running: { color: "bg-emerald-400", label: "Running" },
-  down:    { color: "bg-red-400",    label: "Offline" },
-  unknown: { color: "bg-yellow-400", label: "Unknown" },
-  provisioning: { color: "bg-blue-400", label: "Provisioning" },
+const STATUS_MAP: Record<string, { dot: string; tag: string; label: string }> = {
+  up: { dot: "dot-ok", tag: "tag-ok", label: "UP" },
+  running: { dot: "dot-ok", tag: "tag-ok", label: "RUNNING" },
+  online: { dot: "dot-ok", tag: "tag-ok", label: "ONLINE" },
+  down: { dot: "dot-err", tag: "tag-err", label: "DOWN" },
+  offline: { dot: "dot-err", tag: "tag-err", label: "OFFLINE" },
+  error: { dot: "dot-err", tag: "tag-err", label: "ERROR" },
+  failed: { dot: "dot-err", tag: "tag-err", label: "FAILED" },
+  warning: { dot: "dot-warn", tag: "tag-warn", label: "WARN" },
+  pending: { dot: "dot-warn dot-pulse", tag: "tag-warn", label: "PENDING" },
+  planning: { dot: "dot-warn dot-pulse", tag: "tag-warn", label: "PLANNING" },
+  unknown: { dot: "dot-idle", tag: "tag-neutral", label: "UNKNOWN" },
+  done: { dot: "dot-ok", tag: "tag-ok", label: "DONE" },
+  completed: { dot: "dot-ok", tag: "tag-ok", label: "DONE" },
+  provisioning: { dot: "dot-warn dot-pulse", tag: "tag-info", label: "PROV" },
 };
 
 export function StatusDot({ status, pulse = false }: { status: string; pulse?: boolean }) {
-  const s = STATUS_MAP[status] ?? { color: "bg-slate-400", label: status };
-  return (
-    <span className={`inline-block w-2.5 h-2.5 rounded-full ${s.color} ${pulse ? "animate-pulse" : ""}`} />
-  );
+  const s = STATUS_MAP[status?.toLowerCase()] ?? STATUS_MAP.unknown;
+  return <span className={`dot ${s.dot} ${pulse ? "dot-pulse" : ""}`} />;
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_MAP[status] ?? { color: "bg-slate-500", label: status };
+  const s = STATUS_MAP[status?.toLowerCase()] ?? STATUS_MAP.unknown;
   return (
-    <span className={`status-badge ${s.color.replace("bg-", "badge-")}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.color} ${status === "provisioning" ? "animate-pulse" : ""}`} />
+    <span className={`tag ${s.tag}`}>
+      <span className={`dot ${s.dot}`} />
       {s.label}
     </span>
   );

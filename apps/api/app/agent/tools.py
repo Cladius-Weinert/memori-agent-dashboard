@@ -1,7 +1,12 @@
 """LangGraph-compatible agent tools. Real implementations wired to the SSH pool & provider adapters."""
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+import re
+import subprocess
+from pathlib import Path
 from typing import Any
 
 from app.core.db import SessionLocal
@@ -64,9 +69,84 @@ async def get_logs(instance_id: int, lines: int = 100) -> dict[str, Any]:
 
 async def provision_instance(provider: str, spec: dict[str, Any]) -> dict[str, Any]:
     """Spin up a new instance via the given provider adapter."""
-    from app.services.providers.vultr import get_adapter
+    from app.services.providers import get_adapter
     adapter = get_adapter(provider, **(spec.get("adapter_kwargs", {})))
     return adapter.create_instance(spec)
+
+
+# ---------------------------------------------------------------------------
+# New tools: system_health, memory_search, graphify_query
+# ---------------------------------------------------------------------------
+
+_MEMORY_DIR = Path("/home/ubuntu/.qwen/projects/-home-ubuntu/memory/project")
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+_FM_FIELD_RE = re.compile(r"^(\w+):\s*(.+)$", re.MULTILINE)
+
+
+async def system_health() -> dict[str, Any]:
+    """Return local server health metrics (CPU, memory, disk, services)."""
+    from app.api.v1.system import _gather_health
+    return await asyncio.to_thread(_gather_health)
+
+
+async def memory_search(query: str = "") -> dict[str, Any]:
+    """Search project memory files. Returns matching entries."""
+    results: list[dict[str, str]] = []
+    if not _MEMORY_DIR.is_dir():
+        return {"memories": results, "query": query}
+
+    query_lower = query.lower()
+
+    def _read_all() -> list[dict[str, str]]:
+        entries: list[dict[str, str]] = []
+        for fp in sorted(_MEMORY_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                text = fp.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            meta: dict[str, str] = {"name": "", "description": "", "type": "project"}
+            content = text
+            m = _FRONTMATTER_RE.match(text)
+            if m:
+                for fm in _FM_FIELD_RE.finditer(m.group(1)):
+                    meta[fm.group(1).strip()] = fm.group(2).strip()
+                content = text[m.end():]
+            if query_lower and query_lower not in (meta.get("name", "") + meta.get("description", "") + content).lower():
+                continue
+            entries.append({
+                "filename": fp.name,
+                "name": meta.get("name", ""),
+                "description": meta.get("description", ""),
+                "type": meta.get("type", "project"),
+                "content": content.strip(),
+            })
+        return entries
+
+    results = await asyncio.to_thread(_read_all)
+    return {"memories": results, "query": query}
+
+
+async def graphify_query(query: str) -> dict[str, Any]:
+    """Run a graphify query and return the result."""
+    graphify_root = os.environ.get("GRAPHIFY_ROOT", "/home/ubuntu")
+
+    def _run() -> str:
+        return subprocess.check_output(
+            ["graphify", "query", query],
+            cwd=graphify_root,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        ).decode("utf-8", errors="replace")
+
+    try:
+        output = await asyncio.to_thread(_run)
+        return {"query": query, "result": output.strip()}
+    except subprocess.CalledProcessError as exc:
+        return {"query": query, "error": exc.output.decode("utf-8", errors="replace") if exc.output else str(exc)}
+    except subprocess.TimeoutExpired:
+        return {"query": query, "error": "graphify query timed out after 30s"}
+    except FileNotFoundError:
+        return {"query": query, "error": "graphify CLI not found on PATH"}
 
 
 # Tool registry exported for the planner
@@ -94,6 +174,24 @@ TOOLS = [
         "description": "Create a new instance via a cloud provider adapter.",
         "parameters": {"provider": "str", "spec": "dict"},
         "fn": provision_instance,
+    },
+    {
+        "name": "system_health",
+        "description": "Get local server health metrics: CPU, memory, disk, Docker, and service status.",
+        "parameters": {},
+        "fn": system_health,
+    },
+    {
+        "name": "memory_search",
+        "description": "Search agent memory files. Pass an empty query to list all memories.",
+        "parameters": {"query": "str"},
+        "fn": memory_search,
+    },
+    {
+        "name": "graphify_query",
+        "description": "Run a natural-language query against the Graphify knowledge graph and return results.",
+        "parameters": {"query": "str"},
+        "fn": graphify_query,
     },
 ]
 

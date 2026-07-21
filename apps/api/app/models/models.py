@@ -171,3 +171,65 @@ class AuditLog(Base):
     target: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan"
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), default="New Chat", nullable=False)
+    model: Mapped[str] = mapped_column(String(128), default="default", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | agent | system
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class TokenUsage(Base):
+    __tablename__ = "token_usage"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target: Mapped[str] = mapped_column(String(512), nullable=False)
+    events: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)

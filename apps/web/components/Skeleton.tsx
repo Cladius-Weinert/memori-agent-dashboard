@@ -1,55 +1,54 @@
-/* Loading skeleton component */
 "use client";
-export function CardSkeleton() {
+
+export function PanelSkeleton() {
   return (
-    <div className="skeleton-card animate-pulse">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-8 h-8 rounded-lg bg-slate-700" />
-        <div className="h-4 w-32 bg-slate-700 rounded" />
+    <div className="panel">
+      <div className="panel-head">
+        <div className="skel" style={{ width: 80, height: 14 }} />
       </div>
-      <div className="h-3 w-48 bg-slate-700/60 rounded mb-2" />
-      <div className="h-3 w-24 bg-slate-700/40 rounded" />
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="panel-row" style={{ gap: 12 }}>
+          <div className="skel" style={{ width: 32, height: 32, borderRadius: "var(--r-sm)" }} />
+          <div className="flex-1 space-y-1">
+            <div className="skel" style={{ width: "60%", height: 13 }} />
+            <div className="skel" style={{ width: "40%", height: 11 }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
 export function PageSkeleton() {
   return (
-    <div className="space-y-4 animate-pulse">
-      <div className="h-6 w-48 bg-slate-700 rounded-lg" />
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-5">
+      <div className="skel" style={{ width: 160, height: 20 }} />
+      <div className="data-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 bg-slate-800/60 rounded-xl" />
+          <div key={i} className="data-cell">
+            <div className="skel" style={{ width: 40, height: 22 }} />
+            <div className="skel" style={{ width: 50, height: 11, marginTop: 4 }} />
+          </div>
         ))}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className="h-32 bg-slate-800/40 rounded-xl" />
-        ))}
-      </div>
+      <PanelSkeleton />
     </div>
   );
 }
 
 export function ChatSkeleton() {
   return (
-    <div className="space-y-4 p-4 animate-pulse">
-      <div className="flex justify-start">
-        <div className="bg-slate-800 rounded-2xl rounded-bl-sm p-4 max-w-[80%]">
-          <div className="h-3 w-48 bg-slate-700 rounded mb-2" />
-          <div className="h-3 w-32 bg-slate-700 rounded" />
-        </div>
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <div className="skel" style={{ width: 24, height: 24, borderRadius: "var(--r-sm)" }} />
+        <div className="skel" style={{ width: "70%", height: 48, borderRadius: "var(--r-md)" }} />
       </div>
       <div className="flex justify-end">
-        <div className="bg-brand-600/30 rounded-2xl rounded-br-sm p-4 max-w-[80%]">
-          <div className="h-3 w-40 bg-slate-600 rounded" />
-        </div>
+        <div className="skel" style={{ width: "50%", height: 36, borderRadius: "var(--r-md)" }} />
       </div>
-      <div className="flex justify-start">
-        <div className="bg-slate-800 rounded-2xl rounded-bl-sm p-4 max-w-[80%]">
-          <div className="h-3 w-36 bg-slate-700 rounded mb-2" />
-          <div className="h-3 w-24 bg-slate-700 rounded" />
-        </div>
+      <div className="flex gap-2">
+        <div className="skel" style={{ width: 24, height: 24, borderRadius: "var(--r-sm)" }} />
+        <div className="skel" style={{ width: "60%", height: 64, borderRadius: "var(--r-md)" }} />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
 from sqlalchemy import pool

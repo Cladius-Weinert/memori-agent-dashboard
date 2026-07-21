@@ -8,3 +8,11 @@ dist/
 build/
 *.log
 .DS_Store
+
+# Build artifacts
+.next/
+*.tsbuildinfo
+# Env files
+.env
+.env.local
+.env.*.local

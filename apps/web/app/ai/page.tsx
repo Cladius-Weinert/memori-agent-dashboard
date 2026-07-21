@@ -1,317 +1,609 @@
-/* Opsora — Premium AI Agent Interface */
 "use client";
+
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Layout } from "@/app/components/Layout";
-import { ModelPicker } from "@/components/ModelPicker";
 import {
-  Bot,
-  Send,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  Sparkles,
-  Terminal,
-  FileText,
-  Server,
-  Globe,
-  HardDrive,
-  RefreshCw,
+  Bot, Send, Loader2, CheckCircle, XCircle, Globe, HardDrive,
+  RefreshCw, Sparkles, Download, Brain, MessageSquare, Plus, Trash2, ChevronLeft
 } from "lucide-react";
 import { getHeaders, apiUrl } from "@/app/api/api";
+import useSWR from "swr";
 
-/* ─── Types ─── */
-type Msg = {
-  role: "user" | "agent";
-  content: string;
-  actions?: Action[];
-  done?: boolean;
-  id: string;
-};
-type Action = {
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
+
+interface Msg {
   id: number;
-  tool: string;
+  role: "user" | "agent" | "tool" | "thinking";
+  text: string;
+  toolName?: string;
+  toolParams?: string;
+  toolStatus?: "pending" | "approved" | "refused";
+  ts: number;
+}
+
+interface Conversation {
+  id: number;
+  title: string;
+  last_message: string;
+  updated_at: string;
+}
+
+interface Memory {
+  id: number;
+  name: string;
+  description: string;
+  type: string;
+}
+
+interface SystemHealth {
+  hostname: string;
+  cpu: number;
+  ram: number;
+  instances: number;
+}
+
+interface ActionItem {
+  id: number;
+  action_type: string;
   params: Record<string, unknown>;
-  result: Record<string, unknown>;
-  requires_approval: boolean;
-  approved_by?: number;
-  status?: "pending" | "approved" | "refused";
+  status: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+const swrFetcher = async (url: string) => {
+  const res = await fetch(url, { headers: getHeaders() });
+  if (!res.ok) throw new Error(`SWR ${res.status}`);
+  return res.json();
 };
 
-const QUICK_ACTIONS = [
-  { label: "Check all servers", icon: Globe, desc: "Ping & status" },
-  { label: "Show disk usage", icon: HardDrive, desc: "df -h" },
-  { label: "System update", icon: RefreshCw, desc: "apt update" },
-  { label: "Deploy app", icon: Sparkles, desc: "Git pull + build" },
-];
+function formatMd(text: string): string {
+  return text
+    .replace(/```([\s\S]*?)```/g, '<pre class="log-block">$1</pre>')
+    .replace(/`([^`]+)`/g, '<code class="mono">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br/>");
+}
 
-let msgId = 0;
-const uid = () => `m-${++msgId}`;
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
-/* ─── Tool execution icon ─── */
-const toolIcon = (tool: string) => {
-  if (tool.includes("list") || tool.includes("status")) return <Server size={12} />;
-  if (tool.includes("command") || tool.includes("run")) return <Terminal size={12} />;
-  if (tool.includes("log")) return <FileText size={12} />;
-  return <Bot size={12} />;
-};
+let msgIdSeq = 0;
+const nextId = () => ++msgIdSeq;
 
-/* ─── Component ─── */
-export default function OpsoraPage() {
-  const [messages, setMessages] = useState<Msg[]>([
-    { role: "agent", content: "Halo, saya **Opsora**.\n\nKatakan apa yang perlu dilakukan — cek server, deploy, update, atau kelola infrastruktur Anda.", id: uid() },
-  ]);
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
+export default function AIPage() {
+  /* ---------- state ---------- */
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("nvidia-llama");
-  const [jobId, setJobId] = useState<number | null>(null);
-  const chatEnd = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showMemory, setShowMemory] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
 
-  /* Auto scroll */
-  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const esRef = useRef<EventSource | null>(null);
 
-  /* Cleanup polling */
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  /* ---------- data fetching ---------- */
+  const { data: conversations, mutate: mutateConvos } = useSWR<Conversation[]>(
+    apiUrl("/api/v1/conversations"),
+    swrFetcher,
+    { refreshInterval: 10000 }
+  );
 
-  /* ─── Poll job actions ─── */
-  const startPolling = useCallback((jobId: number, msgIdx: number) => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
+  const { data: memories, mutate: mutateMemories } = useSWR<Memory[]>(
+    apiUrl("/api/v1/memory/memories"),
+    swrFetcher,
+    { refreshInterval: 30000 }
+  );
+
+  /* ---------- system health ---------- */
+  useEffect(() => {
+    const fetchHealth = async () => {
       try {
-        const res = await fetch(apiUrl(`/api/v1/agent/jobs/${jobId}`), { headers: getHeaders() });
-        const data = await res.json();
-        setMessages((prev) => {
-          const updated = [...prev];
-          const m = updated[msgIdx];
-          if (!m) return prev;
-          updated[msgIdx] = {
-            ...m,
-            actions: (data.actions ?? []).map((a: Action) => ({
-              ...a,
-              status: a.approved_by ? "approved" : a.result?.refused ? "refused" : "pending" as const,
-            })),
-          };
-          if (data.status === "completed" || data.status === "failed") {
-            updated[msgIdx] = { ...updated[msgIdx], done: true };
-          }
-          return updated;
-        });
-        if (data.status === "completed" || data.status === "failed") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setIsRunning(false);
-        }
-      } catch { /* retry */ }
-    }, 2000);
+        const res = await fetch(apiUrl("/api/v1/system/health"), { headers: getHeaders() });
+        if (res.ok) setSystemHealth(await res.json());
+      } catch { /* ignore */ }
+    };
+    fetchHealth();
+    const iv = setInterval(fetchHealth, 15000);
+    return () => clearInterval(iv);
   }, []);
 
-  /* ─── Send ─── */
-  const send = useCallback(async (text?: string) => {
-    const goal = text ?? input;
-    if (!goal.trim() || isRunning) return;
+  /* ---------- auto scroll ---------- */
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  /* ---------- load conversation ---------- */
+  const loadConversation = useCallback(async (id: number) => {
+    setActiveConversationId(id);
+    try {
+      const res = await fetch(apiUrl(`/api/v1/conversations/${id}/messages`), { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(
+          data.map((m: { role: string; content: string }) => ({
+            id: nextId(),
+            role: m.role === "assistant" ? "agent" : m.role === "tool" ? "tool" : "user",
+            text: m.content,
+            ts: Date.now(),
+          }))
+        );
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  /* ---------- delete memory ---------- */
+  const deleteMemory = useCallback(async (id: number) => {
+    await fetch(apiUrl(`/api/v1/memory/memories/${id}`), {
+      method: "DELETE",
+      headers: getHeaders(),
+    });
+    mutateMemories();
+  }, [mutateMemories]);
+
+  /* ---------- poll actions for approval ---------- */
+  const pollActions = useCallback((jobId: string) => {
+    const iv = setInterval(async () => {
+      try {
+        const res = await fetch(apiUrl(`/api/v1/agent/actions?job_id=${jobId}`), { headers: getHeaders() });
+        if (!res.ok) return;
+        const actions: ActionItem[] = await res.json();
+        actions.forEach((a) => {
+          if (a.status === "pending_approval") {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === a.id && m.role === "tool")) return prev;
+              return [
+                ...prev,
+                {
+                  id: a.id,
+                  role: "tool",
+                  text: "",
+                  toolName: a.action_type,
+                  toolParams: JSON.stringify(a.params, null, 2),
+                  toolStatus: "pending",
+                  ts: Date.now(),
+                },
+              ];
+            });
+          }
+        });
+      } catch { /* ignore */ }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
+  /* ---------- approve / refuse action ---------- */
+  const handleActionResponse = useCallback(async (actionId: number, approve: boolean) => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === actionId ? { ...m, toolStatus: approve ? "approved" : "refused" } : m
+      )
+    );
+    try {
+      await fetch(apiUrl(`/api/v1/agent/actions/${actionId}`), {
+        method: "POST",
+        headers: { ...getHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: approve ? "approved" : "refused" }),
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  /* ---------- send message (SSE) ---------- */
+  const sendMessage = useCallback(async () => {
+    const trimmed = input.trim();
+    if (!trimmed || isRunning) return;
+
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: goal, id: uid() }]);
     setIsRunning(true);
 
-    const thinkingId = uid();
-    const thinkingIdx = messages.length + 1;
-    setMessages((prev) => [...prev, { role: "agent", content: "🧠", actions: [], id: thinkingId }]);
+    const userMsg: Msg = { id: nextId(), role: "user", text: trimmed, ts: Date.now() };
+    setMessages((prev) => [...prev, userMsg]);
+
+    const thinkingMsg: Msg = { id: nextId(), role: "thinking", text: "", ts: Date.now() };
+    setMessages((prev) => [...prev, thinkingMsg]);
 
     try {
-      const res = await fetch(apiUrl("/api/v1/agent/run"), {
+      const runRes = await fetch(apiUrl("/api/v1/agent/run"), {
         method: "POST",
-        headers: getHeaders(),
-        body: JSON.stringify({ goal, model_id: selectedModel }),
+        headers: { ...getHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: trimmed }),
       });
-      if (!res.ok) throw new Error((await res.json()).detail ?? "Gagal");
-      const data = await res.json();
-      setJobId(data.id);
+      const runData = await runRes.json();
+      const jobId: string = runData.id ?? runData.job_id ?? "";
 
-      const planStr = data.plan?.length
-        ? `📋 **Rencana** (${data.plan.length} langkah):\n${data.plan.map((s: any, i: number) => `  ${i + 1}. \`${s.tool}\` ${JSON.stringify(s.args ?? {})}`).join("\n")}`
-        : "";
+      /* remove thinking, start SSE */
+      setMessages((prev) => prev.filter((m) => m.id !== thinkingMsg.id));
 
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[thinkingIdx] = {
-          role: "agent",
-          content: `✅ **Goal diterima**\n\n${goal}${planStr ? `\n\n${planStr}` : ""}`,
-          actions: [],
-          id: thinkingId,
-        };
-        return updated;
-      });
+      const stopPoll = pollActions(jobId);
 
-      startPolling(data.id, thinkingIdx);
-    } catch (err: unknown) {
+      const es = new EventSource(apiUrl(`/api/v1/agent/jobs/${jobId}/stream`), { withCredentials: true });
+      esRef.current = es;
+
+      es.onmessage = (evt) => {
+        try {
+          const payload = JSON.parse(evt.data);
+          const eventType = payload.type ?? payload.event ?? "";
+
+          if (eventType === "plan") {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: "agent", text: `**Plan:** ${payload.text ?? payload.message ?? ""}`, ts: Date.now() },
+            ]);
+          } else if (eventType === "step") {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: "agent", text: payload.text ?? payload.message ?? "", ts: Date.now() },
+            ]);
+          } else if (eventType === "done") {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: "agent", text: payload.text ?? payload.result ?? "Done.", ts: Date.now() },
+            ]);
+            es.close();
+            esRef.current = null;
+            stopPoll();
+            setIsRunning(false);
+            mutateConvos();
+          }
+        } catch { /* non-JSON frame */ }
+      };
+
+      es.onerror = () => {
+        es.close();
+        esRef.current = null;
+        stopPoll();
+        setIsRunning(false);
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: "agent", text: "⚠️ Connection lost. The agent may still be running.", ts: Date.now() },
+        ]);
+      };
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== thinkingMsg.id));
       setIsRunning(false);
-      const msg = err instanceof Error ? err.message : "Gagal terhubung ke Opsora";
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[thinkingIdx] = { role: "agent", content: `❌ ${msg}`, id: thinkingId };
-        return updated;
-      });
     }
-  }, [input, isRunning, selectedModel, messages.length, startPolling]);
+  }, [input, isRunning, pollActions, mutateConvos]);
 
-  /* ─── Approve/Refuse ─── */
-  const handleAction = useCallback(async (actionId: number, approve: boolean) => {
-    const endpoint = approve ? "approve" : "refuse";
-    try {
-      await fetch(apiUrl(`/api/v1/agent/actions/${actionId}/${endpoint}`), {
-        method: "POST", headers: getHeaders(),
-      });
-      setMessages((prev) =>
-        prev.map((m) => ({
-          ...m,
-          actions: m.actions?.map((a) =>
-            a.id === actionId ? { ...a, status: approve ? "approved" : "refused" as const } : a
-          ),
-        }))
-      );
-    } catch { /* silent */ }
+  /* ---------- new chat ---------- */
+  const newChat = useCallback(() => {
+    setMessages([]);
+    setActiveConversationId(null);
+    setInput("");
   }, []);
 
-  /* ─── Render ─── */
+  /* ---------- export conversation ---------- */
+  const exportConversation = useCallback(() => {
+    const lines = messages.map((m) => {
+      if (m.role === "user") return `## User\n${m.text}`;
+      if (m.role === "agent") return `## Agent\n${m.text}`;
+      if (m.role === "tool") return `## Tool: ${m.toolName}\n\`\`\`\n${m.toolParams}\n\`\`\`\nStatus: ${m.toolStatus}`;
+      return "";
+    });
+    const blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `conversation-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [messages]);
+
+  /* ---------- quick actions ---------- */
+  const quickActions = [
+    { label: "Check servers", icon: Globe, goal: "Check the status of all running server instances" },
+    { label: "Disk usage", icon: HardDrive, goal: "Analyze disk usage and report any partitions above 80%" },
+    { label: "System update", icon: RefreshCw, goal: "Check for available system updates and summarize" },
+    { label: "Deploy", icon: Sparkles, goal: "Show current deployment status and available actions" },
+  ];
+
+  /* ---------- key handler ---------- */
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  /* ================================================================ */
+  /*  Render                                                           */
+  /* ================================================================ */
+
   return (
     <Layout>
-      <div className="flex flex-col h-[calc(100dvh-88px)] md:h-[calc(100vh-64px)] opsora-container">
-        {/* ── Header ── */}
-        <div className="opsora-header">
-          <div className="flex items-center gap-3">
-            <div className="opsora-avatar">
-              <div className="opsora-avatar-ring" />
-              <span className="text-lg font-bold text-white">O</span>
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-white/90 tracking-tight">Opsora</h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-amber-400 animate-pulse" : "bg-emerald-400"}`} />
-                <span className="text-[11px] text-slate-500 font-medium">{isRunning ? "Memproses..." : "Siap"}</span>
-              </div>
-            </div>
-          </div>
-          <ModelPicker selected={selectedModel} onSelect={setSelectedModel} />
-        </div>
+      <div style={{ display: "flex", height: "calc(100vh - 64px)", overflow: "hidden" }}>
 
-        {/* ── Chat ── */}
-        <div className="flex-1 overflow-y-auto space-y-2.5 py-3 px-0.5 opsora-chat">
-          {messages.map((msg, i) => (
-            <div key={msg.id} className={`opsora-bubble-${msg.role} animate-fade-in`}>
-              {msg.role === "agent" && (
-                <div className="opsora-agent-icon">
-                  <Bot size={12} />
+        {/* ===== Conversation Sidebar ===== */}
+        {showSidebar && (
+          <aside
+            className="anim-fade"
+            style={{
+              width: 280,
+              minWidth: 280,
+              borderRight: "1px solid var(--s2)",
+              display: "flex",
+              flexDirection: "column",
+              background: "var(--s0)",
+            }}
+          >
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--s2)" }}>
+              <button className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }} onClick={newChat}>
+                <Plus size={16} /> New Chat
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+              {conversations?.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => loadConversation(c.id)}
+                  style={{
+                    padding: "10px 16px",
+                    cursor: "pointer",
+                    background: activeConversationId === c.id ? "var(--s2)" : "transparent",
+                    borderLeft: activeConversationId === c.id ? "3px solid var(--accent)" : "3px solid transparent",
+                    transition: "background 0.15s",
+                  }}
+                >
+                  <div className="truncate" style={{ fontWeight: 600, fontSize: 13, color: "var(--t1)" }}>
+                    {c.title || "Untitled"}
+                  </div>
+                  <div className="truncate" style={{ fontSize: 12, color: "var(--t3)", marginTop: 2 }}>
+                    {c.last_message}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 4 }}>
+                    {timeAgo(c.updated_at)}
+                  </div>
+                </div>
+              ))}
+              {(!conversations || conversations.length === 0) && (
+                <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--t3)", fontSize: 13 }}>
+                  No conversations yet
                 </div>
               )}
-              <div className={msg.role === "user" ? "opsora-user-body" : "opsora-agent-body"}>
-                {msg.content === "🧠" ? (
-                  <div className="flex items-center gap-2 py-1">
-                    <div className="flex gap-1">
-                      <span className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <span className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <span className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                    </div>
-                    <span className="text-xs text-slate-500 font-medium">Opsora sedang berpikir...</span>
-                  </div>
-                ) : (
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</div>
-                )}
+            </div>
+          </aside>
+        )}
 
-                {/* Actions / tool executions */}
-                {msg.actions && msg.actions.length > 0 && (
-                  <div className="opsora-actions mt-2">
-                    {msg.actions.map((a) => (
-                      <div key={a.id} className={`opsora-action ${a.status === "approved" ? "approved" : a.status === "refused" ? "refused" : ""}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-brand-400 shrink-0">{toolIcon(a.tool)}</span>
-                            <span className="text-xs font-mono font-medium text-slate-200 truncate">{a.tool}</span>
-                            {a.status === "approved" && <CheckCircle size={12} className="text-emerald-400 shrink-0" />}
-                            {a.status === "refused" && <XCircle size={12} className="text-red-400 shrink-0" />}
-                          </div>
-                          {a.requires_approval && a.status === "pending" && (
-                            <div className="flex gap-1.5 shrink-0">
-                              <button
-                                onClick={() => handleAction(a.id, true)}
-                                className="opsora-btn-approve"
-                                aria-label="Approve"
-                              >
-                                <CheckCircle size={14} />
-                              </button>
-                              <button
-                                onClick={() => handleAction(a.id, false)}
-                                className="opsora-btn-refuse"
-                                aria-label="Refuse"
-                              >
-                                <XCircle size={14} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                        {Object.keys(a.params).length > 0 && (
-                          <pre className="text-[11px] text-slate-600 mt-1.5 truncate font-mono">
-                            {JSON.stringify(a.params).slice(0, 120)}
-                          </pre>
-                        )}
-                      </div>
-                    ))}
-                    {!msg.done && (
-                      <div className="flex gap-1 mt-2 pl-1">
-                        <span className="w-1 h-1 bg-brand-400/60 rounded-full animate-pulse-dot" />
-                        <span className="w-1 h-1 bg-brand-400/60 rounded-full animate-pulse-dot" style={{ animationDelay: "0.2s" }} />
-                        <span className="w-1 h-1 bg-brand-400/60 rounded-full animate-pulse-dot" style={{ animationDelay: "0.4s" }} />
+        {/* ===== Chat Area ===== */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+
+          {/* Header */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 16px",
+              borderBottom: "1px solid var(--s2)",
+              background: "var(--s0)",
+            }}
+          >
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowSidebar(!showSidebar)} title="Toggle sidebar">
+              {showSidebar ? <ChevronLeft size={18} /> : <MessageSquare size={18} />}
+            </button>
+
+            <Bot size={20} style={{ color: "var(--accent)" }} />
+            <span style={{ fontWeight: 700, fontSize: 15, color: "var(--t1)" }}>Opsora Agent</span>
+
+            {systemHealth && (
+              <span
+                className="tag tag-info"
+                style={{ fontSize: 11, marginLeft: 8 }}
+              >
+                {systemHealth.hostname} · CPU {systemHealth.cpu}% · {systemHealth.instances} instances
+              </span>
+            )}
+
+            <div style={{ flex: 1 }} />
+
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setShowMemory(!showMemory)} title="Memories">
+              <Brain size={18} />
+            </button>
+            <button className="btn btn-ghost btn-sm btn-icon" onClick={exportConversation} title="Export" disabled={messages.length === 0}>
+              <Download size={18} />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
+            {messages.length === 0 && (
+              <div className="anim-fade" style={{ textAlign: "center", paddingTop: 80 }}>
+                <Bot size={48} style={{ color: "var(--accent)", opacity: 0.5 }} />
+                <h2 style={{ color: "var(--t1)", marginTop: 16, fontWeight: 700 }}>Opsora AI Agent</h2>
+                <p style={{ color: "var(--t3)", fontSize: 14, maxWidth: 400, margin: "8px auto" }}>
+                  Ask me to manage your infrastructure, check deployments, or analyze system metrics.
+                </p>
+
+                {/* Quick Actions */}
+                <div className="qa-grid" style={{ marginTop: 32 }}>
+                  {quickActions.map((qa) => (
+                    <button
+                      key={qa.label}
+                      className="qa-btn anim-slide"
+                      disabled={isRunning}
+                      onClick={() => {
+                        setInput(qa.goal);
+                        setTimeout(() => inputRef.current?.focus(), 50);
+                      }}
+                    >
+                      <qa.icon size={20} style={{ color: "var(--accent)" }} />
+                      <span>{qa.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((m) => {
+              if (m.role === "user") {
+                return (
+                  <div key={m.id} className="bubble-user anim-fade">
+                    {m.text}
+                  </div>
+                );
+              }
+
+              if (m.role === "thinking") {
+                return (
+                  <div key={m.id} className="bubble-agent anim-fade" style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                    <div className="bubble-agent-icon"><Bot size={18} /></div>
+                    <div className="thinking"><span /><span /><span /></div>
+                  </div>
+                );
+              }
+
+              if (m.role === "tool") {
+                return (
+                  <div key={m.id} className={`tool-block anim-fade ${m.toolStatus === "approved" ? "approved" : m.toolStatus === "refused" ? "refused" : ""}`}>
+                    <div className="tool-name">
+                      <span style={{ fontWeight: 600 }}>{m.toolName}</span>
+                      {m.toolStatus === "approved" && <CheckCircle size={14} style={{ color: "var(--ok)", marginLeft: 8 }} />}
+                      {m.toolStatus === "refused" && <XCircle size={14} style={{ color: "var(--err)", marginLeft: 8 }} />}
+                    </div>
+                    {m.toolParams && <pre className="tool-params mono">{m.toolParams}</pre>}
+                    {m.toolStatus === "pending" && (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button className="act-approve" onClick={() => handleActionResponse(m.id, true)}>Approve</button>
+                        <button className="act-refuse" onClick={() => handleActionResponse(m.id, false)}>Refuse</button>
                       </div>
                     )}
                   </div>
-                )}
+                );
+              }
+
+              /* agent */
+              return (
+                <div key={m.id} className="bubble-agent anim-fade" style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                  <div className="bubble-agent-icon"><Bot size={18} /></div>
+                  <div
+                    className="bubble-agent-body"
+                    dangerouslySetInnerHTML={{ __html: formatMd(m.text) }}
+                  />
+                </div>
+              );
+            })}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ padding: "12px 16px", borderTop: "1px solid var(--s2)", background: "var(--s0)" }}>
+            {systemHealth && messages.length === 0 && (
+              <div style={{ fontSize: 11, color: "var(--t3)", marginBottom: 8 }}>
+                Server: {systemHealth.hostname} | CPU: {systemHealth.cpu}% | {systemHealth.instances} instances
               </div>
+            )}
+            <div className="input-bar" style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <span className="model-pill mono">opsora-v2</span>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask the agent..."
+                disabled={isRunning}
+                rows={1}
+                style={{
+                  flex: 1,
+                  background: "var(--s1)",
+                  border: "1px solid var(--s2)",
+                  borderRadius: 8,
+                  padding: "10px 14px",
+                  color: "var(--t1)",
+                  fontSize: 14,
+                  fontFamily: "var(--sans)",
+                  resize: "none",
+                  outline: "none",
+                  minHeight: 42,
+                  maxHeight: 120,
+                }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={sendMessage}
+                disabled={isRunning || !input.trim()}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px" }}
+              >
+                {isRunning ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
+                {isRunning ? "Running" : "Send"}
+              </button>
             </div>
-          ))}
-          <div ref={chatEnd} />
-        </div>
-
-        {/* ── Quick actions ── */}
-        <div className="opsora-quick-actions">
-          {QUICK_ACTIONS.map((qa) => (
-            <button
-              key={qa.label}
-              onClick={() => send(qa.label)}
-              disabled={isRunning}
-              className="opsora-chip"
-            >
-              <qa.icon size={14} className="text-brand-400" />
-              <div className="text-left">
-                <div className="text-xs font-medium text-slate-200">{qa.label}</div>
-                <div className="text-[10px] text-slate-600">{qa.desc}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* ── Input ── */}
-        <div className="opsora-input-area">
-          <div className="opsora-input-wrapper">
-            <input
-              ref={inputRef}
-              className="opsora-input"
-              placeholder="Ketik perintah..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-              }}
-              disabled={isRunning}
-            />
-            <button
-              onClick={() => send()}
-              disabled={isRunning || !input.trim()}
-              className="opsora-send-btn"
-              aria-label="Send"
-            >
-              {isRunning ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
           </div>
         </div>
+
+        {/* ===== Memory Panel ===== */}
+        {showMemory && (
+          <aside
+            className="anim-fade"
+            style={{
+              width: 300,
+              minWidth: 300,
+              borderLeft: "1px solid var(--s2)",
+              background: "var(--s0)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--s2)", display: "flex", alignItems: "center", gap: 8 }}>
+              <Brain size={18} style={{ color: "var(--accent)" }} />
+              <span style={{ fontWeight: 700, fontSize: 14, color: "var(--t1)" }}>Agent Memories</span>
+              <span className="tag tag-info" style={{ marginLeft: "auto", fontSize: 11 }}>
+                {memories?.length ?? 0}
+              </span>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+              {memories?.map((mem) => (
+                <div
+                  key={mem.id}
+                  className="panel"
+                  style={{ margin: "4px 12px", padding: "10px 12px" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: "var(--t1)", flex: 1 }} className="truncate">
+                      {mem.name}
+                    </span>
+                    <span className={`tag ${mem.type === "user" ? "tag-ok" : mem.type === "feedback" ? "tag-err" : "tag-info"}`} style={{ fontSize: 10 }}>
+                      {mem.type}
+                    </span>
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => deleteMemory(mem.id)}
+                      title="Delete memory"
+                      style={{ padding: 2 }}
+                    >
+                      <Trash2 size={14} style={{ color: "var(--err)" }} />
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--t3)", marginTop: 4 }}>
+                    {mem.description}
+                  </div>
+                </div>
+              ))}
+              {(!memories || memories.length === 0) && (
+                <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--t3)", fontSize: 13 }}>
+                  No memories stored
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
     </Layout>
   );

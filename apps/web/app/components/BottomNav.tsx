@@ -1,40 +1,41 @@
-/* Mobile bottom tab navigation — native feel */
 "use client";
-import { useRouter, usePathname } from "next/navigation";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Bot,
+  LayoutDashboard,
   Server,
-  TerminalSquare,
-  Activity,
+  Zap,
   Settings,
 } from "lucide-react";
 
 const TABS = [
   { href: "/ai", label: "AI", icon: Bot },
+  { href: "/dashboard", label: "Activity", icon: LayoutDashboard },
   { href: "/instances", label: "Instances", icon: Server },
-  { href: "/commands", label: "Commands", icon: TerminalSquare },
-  { href: "/dashboard", label: "Activity", icon: Activity },
+  { href: "/commands", label: "Commands", icon: Zap },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function BottomNav() {
-  const router = useRouter();
   const pathname = usePathname();
 
   return (
     <nav className="bottom-nav">
       {TABS.map((tab) => {
-        const active = pathname.startsWith(tab.href);
+        const active = pathname === tab.href;
+        const Icon = tab.icon;
         return (
-          <button
+          <Link
             key={tab.href}
-            onClick={() => router.push(tab.href)}
-            className={`bottom-nav-item ${active ? "active" : ""}`}
+            href={tab.href}
+            className={`bottom-nav-item${active ? " active" : ""}`}
             aria-label={tab.label}
           >
-            <tab.icon size={20} strokeWidth={active ? 2.5 : 1.5} />
+            <Icon size={18} strokeWidth={active ? 2 : 1.5} />
             <span>{tab.label}</span>
-          </button>
+          </Link>
         );
       })}
     </nav>

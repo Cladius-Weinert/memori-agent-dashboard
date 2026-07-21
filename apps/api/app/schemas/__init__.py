@@ -182,3 +182,71 @@ class MetricsOut(BaseModel):
     cpu: list[MetricPoint] = Field(default_factory=list)
     ram: list[MetricPoint] = Field(default_factory=list)
     disk: list[MetricPoint] = Field(default_factory=list)
+
+
+# ---------- Conversations ----------
+class ConversationCreate(BaseModel):
+    title: str = "New Chat"
+    model: str = "default"
+
+
+class ConversationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    title: str
+    model: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationMessageCreate(BaseModel):
+    role: str
+    content: str
+
+
+class ConversationMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    conversation_id: int
+    role: str
+    content: str
+    metadata: dict[str, Any] = Field(alias="metadata_")
+    created_at: datetime
+
+
+# ---------- Token Usage ----------
+class TokenUsageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    created_at: datetime
+
+
+class UsageSummary(BaseModel):
+    total_input: int = 0
+    total_output: int = 0
+    total_cost: float = 0.0
+    by_model: dict[str, dict[str, Any]] = {}
+
+
+# ---------- Alerts ----------
+class AlertCreate(BaseModel):
+    type: str  # whatsapp|telegram|slack|email
+    target: str
+    events: list[str] = Field(default_factory=list)
+
+
+class AlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    type: str
+    target: str
+    events: list[str]
+    is_active: bool
+    created_at: datetime

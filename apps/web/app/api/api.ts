@@ -1,4 +1,4 @@
-import { getHeaders, apiUrl } from "@/app/stores/authStore";
+import { getHeaders, apiUrl, useAuthStore } from "@/app/stores/authStore";
 import type { Instance, User } from "@/app/types";
 
 // Re-export helpers from authStore for direct use by components
@@ -30,18 +30,26 @@ export const instancesApi = {
 
 // Auth API
 export const authApi = {
-  login: (email: string, password: string) =>
-    fetch(apiUrl("/api/v1/auth/login"), {
+  login: async (email: string, password: string) => {
+    const res = await fetch(apiUrl("/api/v1/auth/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
-    }).then((r) => r.json() as Promise<{ access_token: string; token_type: string }>),
-  register: (data: { email: string; password: string; full_name?: string }) =>
-    fetch(apiUrl("/api/v1/auth/register"), {
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    return data as { access_token: string; token_type: string };
+  },
+  register: async (data: { email: string; password: string; full_name?: string }) => {
+    const res = await fetch(apiUrl("/api/v1/auth/register"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
-    }).then((r) => r.json() as Promise<User>),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+    return body as User;
+  },
   me: () => fetcher<User>("/api/v1/auth/me"),
 };
 
@@ -68,9 +76,10 @@ export const agentApi = {
     fetcher<{ id: number; status: string; plan: unknown[] }>(`/api/v1/agent/jobs/${id}`),
 };
 
-// WebSocket helper
+// WebSocket helper — includes auth token as query param
 export function wsUrl(instanceId: number): string {
   const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const wsBase = base.replace(/^http/, "ws");
-  return `${wsBase}/ws/terminal/${instanceId}`;
+  const token = useAuthStore.getState().token ?? "";
+  return `${wsBase}/ws/terminal/${instanceId}?token=${encodeURIComponent(token)}`;
 }
