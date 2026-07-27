@@ -100,6 +100,7 @@ async def build_catalog(user_id: int | None = None) -> dict[str, Any]:
             {"name": "deploy", "description": "Pull, build, deploy, verify", "tools_used": ["run_local_command", "github_run"]},
             {"name": "github-ops", "description": "PR, issue, repo via gh", "tools_used": ["github_run", "github_api"]},
             {"name": "terminal", "description": "Jalankan perintah shell", "tools_used": ["run_local_command", "mcp_invoke"]},
+            {"name": "todos", "description": "Buat & kelola checklist tugas", "tools_used": ["todo_create", "todo_list", "todo_update", "todo_delete"]},
         ],
         "resources": {
             "docker_containers": docker_n,

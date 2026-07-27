@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jose import JWTError
+
 from app.core.db import get_db
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.models.models import User
@@ -25,7 +27,10 @@ async def get_current_user(
     session: AsyncSession = Depends(get_db),
 ) -> User:
     token = _get_token_from_request(request)
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user_id = int(payload.get("sub", 0))

@@ -32,6 +32,7 @@ OR if stuck:
 Rules:
 - Prefer webfetch for docs/URLs, read_file/write_file for code, run_local_command for terminal.
 - Use list_instances/run_command for remote servers.
+- Use todo_create with titles=[] to break multi-step goals into a checklist; todo_update to mark done.
 - One tool per step. Be specific in args."""
 
 REFLECT_SYSTEM = """You judge whether an Opsora agent goal is complete.
@@ -86,6 +87,7 @@ def _goal_needs_tools(goal: str, mode: str, plan: list[str] | None = None) -> bo
         "run ", "terminal", "command", "deploy", "status", "health", "search",
         "debug", "fix", "code", "server", "instance", "log", "github", "gh ",
         "repo", "pull request", "pr ", "commit", "git ",
+        "todo", "todos", "checklist", "tugas", "daftar",
     )
     if mode in ("plan", "research"):
         return True

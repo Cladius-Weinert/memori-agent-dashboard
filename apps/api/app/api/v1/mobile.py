@@ -68,6 +68,7 @@ def _llm_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM_API_KEY or os.getenv("NVIDIA_API_KEY", ""),
         base_url=settings.LLM_BASE_URL,
+        timeout=60,
     )
 
 
@@ -103,7 +104,7 @@ async def _mobile_payload(session: AsyncSession, user: User) -> dict[str, Any]:
         "token_type": "bearer",
         "expires_in_days": settings.MOBILE_ACCESS_TOKEN_EXPIRE_DAYS,
         "user": {"id": user.id, "email": user.email, "full_name": user.full_name},
-        "api_version": "1.6",
+        "api_version": "1.7",
         "permanent_api_url": PERMANENT_GATEWAY,
         "llm": {
             "default_model": settings.LLM_MODEL,
@@ -129,6 +130,7 @@ async def _mobile_payload(session: AsyncSession, user: User) -> dict[str, Any]:
             "agent_loop": True,
             "mcp_custom": True,
             "providers_custom": True,
+            "todos": True,
             "elastic_observability": elastic_status()["configured"],
         },
         "observability": elastic_status(),
@@ -402,7 +404,79 @@ async def mobile_delete_mcp(
     server_id: str,
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    delete_mcp_server(current_user.id, server_id)
+    if server_id.startswith("builtin-") or server_id in ("terminal", "github"):
+        raise HTTPException(status_code=400, detail="Builtin MCP tidak bisa dihapus")
+    ok = delete_mcp_server(current_user.id, server_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="MCP server tidak ditemukan")
+    return {"status": "deleted"}
+
+
+class TodoIn(BaseModel):
+    title: str
+    notes: str = ""
+    priority: str = "normal"
+    status: str = "pending"
+
+
+class TodoPatch(BaseModel):
+    title: str | None = None
+    notes: str | None = None
+    priority: str | None = None
+    status: str | None = None
+
+
+@router.get("/todos")
+async def mobile_list_todos(
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.services.todos import list_todos
+    items = list_todos(current_user.id, status=status)
+    return {"todos": items, "count": len(items)}
+
+
+@router.post("/todos")
+async def mobile_create_todo(
+    data: TodoIn,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.services.todos import create_todo
+    try:
+        item = create_todo(
+            current_user.id,
+            data.title,
+            notes=data.notes,
+            priority=data.priority,
+            status=data.status,
+            created_by="user",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"todo": item}
+
+
+@router.patch("/todos/{todo_id}")
+async def mobile_update_todo(
+    todo_id: str,
+    data: TodoPatch,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.services.todos import update_todo
+    item = update_todo(current_user.id, todo_id, data.model_dump(exclude_none=True))
+    if not item:
+        raise HTTPException(status_code=404, detail="Todo tidak ditemukan")
+    return {"todo": item}
+
+
+@router.delete("/todos/{todo_id}")
+async def mobile_delete_todo(
+    todo_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    from app.services.todos import delete_todo
+    if not delete_todo(current_user.id, todo_id):
+        raise HTTPException(status_code=404, detail="Todo tidak ditemukan")
     return {"status": "deleted"}
 
 

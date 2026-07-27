@@ -370,6 +370,66 @@ async def mcp_invoke(server: str, tool: str, arguments: dict[str, Any] | None = 
         return {"error": str(exc), "server": target["name"]}
 
 
+# ── Todos (agent + user) ───────────────────────────────────────
+
+async def todo_list(status: str = "") -> dict[str, Any]:
+    """List todos for the current user. Optional status filter."""
+    uid = _user_id_ctx.get()
+    if uid is None:
+        return {"error": "no user context"}
+    from app.services.todos import list_todos
+    items = list_todos(uid, status=status or None)
+    return {"todos": items, "count": len(items)}
+
+
+async def todo_create(title: str = "", titles: list[str] | None = None, notes: str = "", priority: str = "normal") -> dict[str, Any]:
+    """Create one or many todos. Prefer titles[] when breaking a goal into steps."""
+    uid = _user_id_ctx.get()
+    if uid is None:
+        return {"error": "no user context"}
+    from app.services.todos import create_todo, create_todos_bulk
+    if titles:
+        created = create_todos_bulk(uid, [str(t) for t in titles], created_by="agent", priority=priority or "normal")
+        return {"created": created, "count": len(created)}
+    if not title:
+        return {"error": "title or titles required"}
+    item = create_todo(uid, title, notes=notes or "", priority=priority or "normal", created_by="agent")
+    return {"todo": item}
+
+
+async def todo_update(todo_id: str, status: str = "", title: str = "", notes: str = "", priority: str = "") -> dict[str, Any]:
+    """Update a todo status/title/notes/priority."""
+    uid = _user_id_ctx.get()
+    if uid is None:
+        return {"error": "no user context"}
+    from app.services.todos import update_todo
+    patch: dict[str, Any] = {}
+    if status:
+        patch["status"] = status
+    if title:
+        patch["title"] = title
+    if notes:
+        patch["notes"] = notes
+    if priority:
+        patch["priority"] = priority
+    if not patch:
+        return {"error": "no fields to update"}
+    item = update_todo(uid, todo_id, patch)
+    if not item:
+        return {"error": f"todo not found: {todo_id}"}
+    return {"todo": item}
+
+
+async def todo_delete(todo_id: str) -> dict[str, Any]:
+    """Delete a todo by id."""
+    uid = _user_id_ctx.get()
+    if uid is None:
+        return {"error": "no user context"}
+    from app.services.todos import delete_todo
+    ok = delete_todo(uid, todo_id)
+    return {"deleted": ok, "id": todo_id}
+
+
 async def graphify_query(query: str) -> dict[str, Any]:
     """Run a graphify query and return the result."""
     graphify_root = os.environ.get("GRAPHIFY_ROOT", "/home/ubuntu")
@@ -478,6 +538,30 @@ TOOLS = [
         "description": "Invoke MCP server: terminal (shell), github (gh/api), or custom HTTP MCP.",
         "parameters": {"server": "str", "tool": "str", "arguments": "dict"},
         "fn": mcp_invoke,
+    },
+    {
+        "name": "todo_list",
+        "description": "List user todos. Optional status: pending|in_progress|done|cancelled.",
+        "parameters": {"status": "str = ''"},
+        "fn": todo_list,
+    },
+    {
+        "name": "todo_create",
+        "description": "Create todo(s). Use titles=[] to break a goal into checklist steps. created_by=agent.",
+        "parameters": {"title": "str = ''", "titles": "list[str] | None", "notes": "str = ''", "priority": "str = normal"},
+        "fn": todo_create,
+    },
+    {
+        "name": "todo_update",
+        "description": "Update a todo by id (status/title/notes/priority).",
+        "parameters": {"todo_id": "str", "status": "str = ''", "title": "str = ''", "notes": "str = ''", "priority": "str = ''"},
+        "fn": todo_update,
+    },
+    {
+        "name": "todo_delete",
+        "description": "Delete a todo by id.",
+        "parameters": {"todo_id": "str"},
+        "fn": todo_delete,
     },
 ]
 
