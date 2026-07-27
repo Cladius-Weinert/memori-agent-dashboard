@@ -37,6 +37,20 @@ if grep -q 'change-me-in-production' "$ENV_FILE" 2>/dev/null; then
 fi
 
 cd "$DEPLOY_DIR"
+
+# Detect broken Docker internal DB networking (API container cannot reach db:5432)
+detect_db_url() {
+  local internal="postgresql+asyncpg://memori:memori@db:5432/memori?ssl=disable"
+  local host_fallback="postgresql+asyncpg://memori:memori@host.docker.internal:5433/memori?ssl=disable"
+  if $COMPOSE run --rm --no-deps -T api python3 -c \
+    "import socket; s=socket.create_connection(('db',5432),2); s.close()" 2>/dev/null; then
+    echo "$internal"
+  else
+    echo "⚠️  Inter-container DB unreachable — routing API via host.docker.internal:5433" >&2
+    echo "$host_fallback"
+  fi
+}
+
 echo "Building and starting containers..."
 if docker compose version >/dev/null 2>&1; then
   COMPOSE="docker compose"
@@ -52,7 +66,18 @@ if ! docker info >/dev/null 2>&1; then
   COMPOSE="sudo $COMPOSE"
 fi
 
-$COMPOSE up -d --build
+# Start DB first so host port 5433 is available for fallback routing
+$COMPOSE up -d --build db redis
+sleep 3
+
+DETECTED_DB_URL="$(detect_db_url)"
+if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DETECTED_DB_URL}|" "$ENV_FILE"
+else
+  echo "DATABASE_URL=${DETECTED_DB_URL}" >> "$ENV_FILE"
+fi
+
+$COMPOSE up -d --build api web
 
 echo ""
 echo "=== Deployed ==="

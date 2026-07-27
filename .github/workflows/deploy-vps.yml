@@ -1,0 +1,35 @@
+name: Deploy Opsora Agent to VPS
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/**"
+      - "deploy/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: vars.VPS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            APP_DIR="${VPS_APP_DIR:-$HOME/memori-agent-dashboard}"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone https://github.com/Cladius-Weinert/memori-agent-dashboard.git "$APP_DIR"
+            fi
+            cd "$APP_DIR"
+            git fetch origin master
+            git checkout master
+            git pull origin master
+            test -f deploy/.env || cp deploy/.env.example deploy/.env
+            bash deploy/deploy-production.sh
+            curl -sf http://localhost:9001/healthz
+            curl -sf -o /dev/null -w "IDE %{http_code}\n" http://localhost:3002/ide

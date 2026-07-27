@@ -40,10 +40,12 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       WORKSPACE_ROOT: /workspace
+      # Override via deploy/.env — use host.docker.internal:5433 if inter-container DB networking fails
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://memori:memori@db:5432/memori?ssl=disable}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
     command: >
-      sh -c "for i in 1 2 3 4 5 6 7 8 9 10; do python -c \"import socket; s=socket.create_connection(('db',5432),3); s.close()\" 2>/dev/null && break; sleep 2; done;
-      alembic upgrade head;
+      sh -c "for i in $$(seq 1 30); do python -c \"import socket; s=socket.create_connection(('db',5432),2); s.close()\" 2>/dev/null && break; sleep 1; done;
+      timeout 90 alembic upgrade head || echo 'migration skipped';
       exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   web:
