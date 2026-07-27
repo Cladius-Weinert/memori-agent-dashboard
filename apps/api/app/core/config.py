@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000"
     ELASTIC_APM_SERVER_URL: str = ""
     ELASTIC_APM_SECRET_TOKEN: str = ""
+    ELASTIC_APM_API_KEY: str = ""
     ELASTIC_APM_SERVICE_NAME: str = "memori-agent-api"
     ELASTICSEARCH_URL: str = ""
     ELASTICSEARCH_API_KEY: str = ""

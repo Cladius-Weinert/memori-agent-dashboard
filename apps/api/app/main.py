@@ -60,13 +60,17 @@ if _apm_url:
     try:
         from elasticapm.contrib.starlette import ElasticAPM, make_apm_client
 
-        _apm_client = make_apm_client({
+        _apm_cfg: dict[str, str] = {
             "SERVICE_NAME": os.getenv("ELASTIC_APM_SERVICE_NAME", "memori-agent-api"),
             "SERVER_URL": _apm_url,
-            "SECRET_TOKEN": os.getenv("ELASTIC_APM_SECRET_TOKEN", ""),
             "ENVIRONMENT": os.getenv("ELASTIC_ENVIRONMENT", "production"),
-            "TRANSACTIONS_IGNORE_PATTERNS": ["^GET /healthz"],
-        })
+            "TRANSACTIONS_IGNORE_PATTERNS": "^GET /healthz",
+        }
+        if os.getenv("ELASTIC_APM_API_KEY") or os.getenv("ELASTICSEARCH_API_KEY"):
+            _apm_cfg["API_KEY"] = os.getenv("ELASTIC_APM_API_KEY") or os.getenv("ELASTICSEARCH_API_KEY", "")
+        elif os.getenv("ELASTIC_APM_SECRET_TOKEN"):
+            _apm_cfg["SECRET_TOKEN"] = os.getenv("ELASTIC_APM_SECRET_TOKEN", "")
+        _apm_client = make_apm_client(_apm_cfg)
         app.add_middleware(ElasticAPM, client=_apm_client)
     except ImportError:
         pass
