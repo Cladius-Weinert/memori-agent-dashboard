@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.agent.agent_loop import run_tool_loop, _goal_needs_tools
 
 # ── Model registry (verified on account) ────────────────────────
 
@@ -67,6 +68,10 @@ class MultiAgentState:
     done: bool = False
     final_reply: str = ""
     loop_count: int = 0
+    requires_tools: bool = False
+    done_criteria: str = ""
+    tool_executed: list[dict[str, Any]] = field(default_factory=list)
+    tool_summary: str = ""
 
 
 def _client() -> AsyncOpenAI:
@@ -150,7 +155,8 @@ def _classify_goal(goal: str, mode: str) -> list[AgentRole]:
 ORCHESTRATOR_SYSTEM = """You are the Opsora ORCHESTRATOR agent (NVIDIA Nemotron Reasoning).
 Decompose the user goal into a JSON plan the team can execute.
 Output ONLY valid JSON:
-{"goal_summary":"...","steps":["step1","step2"],"agents_needed":["visual","executor"],"done_criteria":"...","requires_tools":false}
+{"goal_summary":"...","steps":["step1","step2"],"agents_needed":["visual","executor"],"done_criteria":"...","requires_tools":true}
+Set requires_tools=true when the goal needs webfetch, files, terminal, or cloud ops.
 Loop until done_criteria met. Be specific about cloud ops, MCP tools, terminal commands."""
 
 VISUAL_SYSTEM = """You are the Opsora VISUAL agent (Llama 90B Vision).
@@ -188,10 +194,13 @@ async def run_multi_agent(
 
     yield {"type": "agents", "agents": [{"role": a.value, "label": AGENT_LABELS[a], "model": AGENT_MODELS[a]} for a in agents]}
 
+    orchestrator_done = False
     while state.loop_count < MAX_LOOPS and not state.done:
         state.loop_count += 1
 
         for role in agents:
+            if role == AgentRole.ORCHESTRATOR and orchestrator_done:
+                continue
             step = AgentStep(agent=role, status="running", model=AGENT_MODELS[role])
             state.steps.append(step)
             yield {
@@ -210,8 +219,9 @@ async def run_multi_agent(
                 parsed = _strip_json(content)
                 if isinstance(parsed, dict) and "steps" in parsed:
                     state.plan = parsed.get("steps", [])
-                    done_crit = parsed.get("done_criteria", "")
-                    state.done = state.loop_count >= 1 and bool(state.plan)
+                    state.done_criteria = parsed.get("done_criteria", "")
+                    state.requires_tools = bool(parsed.get("requires_tools", True))
+                    orchestrator_done = True
                 step.output = content
             elif role == AgentRole.VISUAL:
                 content, model = await _call_agent(role, VISUAL_SYSTEM, user_msg, max_tokens=1500)
@@ -223,7 +233,12 @@ async def run_multi_agent(
                 content, model = await _call_agent(role, EXPLORE_SYSTEM, user_msg, max_tokens=800)
                 step.output = content
             else:
-                synth_ctx = ctx + "\n\nSpecialist outputs:\n" + "\n---\n".join(
+                tool_ctx = ""
+                if state.tool_executed:
+                    tool_ctx = "\n\nTool results:\n" + json.dumps(state.tool_executed[-6:], default=str)[:4000]
+                    if state.tool_summary:
+                        tool_ctx += f"\n\nTool loop summary: {state.tool_summary}"
+                synth_ctx = ctx + tool_ctx + "\n\nSpecialist outputs:\n" + "\n---\n".join(
                     f"[{s.agent.value}]: {s.output[:500]}" for s in state.steps if s.output
                 )
                 content, model = await _call_agent(role, EXECUTOR_SYSTEM, f"Goal: {goal}\n\n{synth_ctx}", max_tokens=2048)
@@ -242,6 +257,47 @@ async def run_multi_agent(
                 "plan": state.plan,
             }
 
+        # Tool loop after first orchestration pass
+        if orchestrator_done and (state.requires_tools or _goal_needs_tools(goal, mode, state.plan)) and not state.tool_executed:
+            async for ev in run_tool_loop(
+                goal,
+                mode=mode,
+                plan=state.plan,
+                done_criteria=state.done_criteria,
+                context=context_parts,
+            ):
+                yield ev
+                if ev.get("type") == "tool_done":
+                    state.tool_executed.append({
+                        "tool": ev.get("tool"),
+                        "args": ev.get("args"),
+                        "result": ev.get("result"),
+                    })
+                elif ev.get("type") == "loop_done":
+                    state.tool_summary = ev.get("summary", "")
+                    if ev.get("executed"):
+                        state.tool_executed = ev["executed"]
+
+            # Re-run executor with tool results
+            if state.tool_executed:
+                synth = "\n".join(context_parts)
+                tool_blob = json.dumps(state.tool_executed[-8:], default=str)[:5000]
+                final_content, final_model = await _call_agent(
+                    AgentRole.EXECUTOR,
+                    EXECUTOR_SYSTEM,
+                    f"Goal: {goal}\n\n{synth}\n\nTool execution results:\n{tool_blob}\n\nSummarize outcomes for the user.",
+                    max_tokens=2048,
+                )
+                state.final_reply = final_content
+                yield {
+                    "type": "agent_done",
+                    "agent": AgentRole.EXECUTOR.value,
+                    "label": AGENT_LABELS[AgentRole.EXECUTOR],
+                    "model": final_model,
+                    "output": final_content[:800],
+                    "plan": state.plan,
+                }
+
         if state.final_reply:
             state.done = True
 
@@ -251,4 +307,6 @@ async def run_multi_agent(
         "plan": state.plan,
         "loops": state.loop_count,
         "agents_used": [s.agent.value for s in state.steps],
+        "tools_executed": len(state.tool_executed),
+        "tool_summary": state.tool_summary,
     }

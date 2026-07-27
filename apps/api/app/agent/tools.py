@@ -8,11 +8,24 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from app.core.db import SessionLocal
 from app.models.models import Instance
 from app.services.ssh_pool import ssh_pool
 from app.agent.safety import check_command, is_destructive
+
+# Paths the agent may read/write locally.
+_ALLOWED_WRITE_ROOTS = (
+    Path("/agent"),
+    Path("/tmp/opsora-agent"),
+    Path("/home/ubuntu/.opsora"),
+)
+_MAX_FETCH_BYTES = 256_000
+_MAX_FILE_BYTES = 512_000
+_LOCAL_CMD_TIMEOUT = 60
 
 
 async def list_instances(team_id: int | None = None) -> dict[str, Any]:
@@ -126,6 +139,122 @@ async def memory_search(query: str = "") -> dict[str, Any]:
     return {"memories": results, "query": query}
 
 
+def _resolve_safe_path(raw: str) -> Path | None:
+    """Return resolved path if it lies under an allowed root."""
+    try:
+        p = Path(raw).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    for root in _ALLOWED_WRITE_ROOTS:
+        try:
+            root_resolved = root.resolve()
+            p.relative_to(root_resolved)
+            return p
+        except ValueError:
+            continue
+    return None
+
+
+async def webfetch(url: str, method: str = "GET") -> dict[str, Any]:
+    """Fetch a URL and return status, headers summary, and truncated body."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return {"error": "only http/https URLs allowed", "url": url}
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            headers={"User-Agent": "Opsora-Agent/1.3"},
+        ) as client:
+            resp = await client.request(method.upper(), url)
+            body = resp.text[:_MAX_FETCH_BYTES]
+            return {
+                "url": str(resp.url),
+                "status": resp.status_code,
+                "content_type": resp.headers.get("content-type", ""),
+                "body": body,
+                "truncated": len(resp.text) > _MAX_FETCH_BYTES,
+            }
+    except httpx.HTTPError as exc:
+        return {"error": str(exc), "url": url}
+
+
+async def read_file(path: str) -> dict[str, Any]:
+    """Read a file from an allowed workspace path."""
+    safe = _resolve_safe_path(path)
+    if safe is None:
+        return {"error": f"path not allowed: {path}", "allowed_roots": [str(r) for r in _ALLOWED_WRITE_ROOTS]}
+    if not safe.is_file():
+        return {"error": "file not found", "path": str(safe)}
+
+    def _read() -> str:
+        return safe.read_text(encoding="utf-8", errors="replace")[:_MAX_FILE_BYTES]
+
+    content = await asyncio.to_thread(_read)
+    return {"path": str(safe), "content": content, "truncated": safe.stat().st_size > _MAX_FILE_BYTES}
+
+
+async def write_file(path: str, content: str, append: bool = False) -> dict[str, Any]:
+    """Create or overwrite a file in an allowed workspace path."""
+    safe = _resolve_safe_path(path)
+    if safe is None:
+        return {"error": f"path not allowed: {path}", "allowed_roots": [str(r) for r in _ALLOWED_WRITE_ROOTS]}
+    if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
+        return {"error": f"content exceeds {_MAX_FILE_BYTES} bytes"}
+
+    def _write() -> dict[str, Any]:
+        safe.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if append else "w"
+        with safe.open(mode, encoding="utf-8") as fh:
+            fh.write(content)
+        return {"path": str(safe), "bytes": safe.stat().st_size, "append": append}
+
+    return await asyncio.to_thread(_write)
+
+
+async def run_local_command(command: str, cwd: str | None = None) -> dict[str, Any]:
+    """Run a shell command on the API host with safety checks."""
+    allowed, reason = check_command(command)
+    if not allowed:
+        return {"error": f"command blocked: {reason}", "allowed": False, "command": command}
+
+    requires_approval = is_destructive(command)
+    if requires_approval:
+        return {
+            "warning": "destructive command — requires approval",
+            "requires_approval": True,
+            "command": command,
+        }
+
+    workdir = _resolve_safe_path(cwd) if cwd else Path("/agent")
+    if workdir is None or not workdir.is_dir():
+        workdir = Path("/agent")
+
+    def _run() -> dict[str, Any]:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=_LOCAL_CMD_TIMEOUT,
+        )
+        return {
+            "allowed": True,
+            "command": command,
+            "cwd": str(workdir),
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout[-8000:],
+            "stderr": proc.stderr[-4000:],
+        }
+
+    try:
+        return await asyncio.to_thread(_run)
+    except subprocess.TimeoutExpired:
+        return {"error": f"command timed out after {_LOCAL_CMD_TIMEOUT}s", "command": command}
+
+
 async def graphify_query(query: str) -> dict[str, Any]:
     """Run a graphify query and return the result."""
     graphify_root = os.environ.get("GRAPHIFY_ROOT", "/home/ubuntu")
@@ -192,6 +321,30 @@ TOOLS = [
         "description": "Run a natural-language query against the Graphify knowledge graph and return results.",
         "parameters": {"query": "str"},
         "fn": graphify_query,
+    },
+    {
+        "name": "webfetch",
+        "description": "Fetch a public HTTP/HTTPS URL and return status + body (web research, docs, APIs).",
+        "parameters": {"url": "str", "method": "str = GET"},
+        "fn": webfetch,
+    },
+    {
+        "name": "read_file",
+        "description": "Read a text file from the Opsora workspace (/agent, /tmp/opsora-agent).",
+        "parameters": {"path": "str"},
+        "fn": read_file,
+    },
+    {
+        "name": "write_file",
+        "description": "Create or overwrite a file in the Opsora workspace.",
+        "parameters": {"path": "str", "content": "str", "append": "bool = false"},
+        "fn": write_file,
+    },
+    {
+        "name": "run_local_command",
+        "description": "Run a shell command on the API host (terminal). Destructive commands require approval.",
+        "parameters": {"command": "str", "cwd": "str | None"},
+        "fn": run_local_command,
     },
 ]
 
