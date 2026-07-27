@@ -7,7 +7,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import auth, instances, terminal, commands, agent, models, system, memory, conversations, usage, alerts, catalog, workspace
+from app.api.v1 import auth, instances, terminal, commands, agent, models, system, memory, conversations, usage, alerts, catalog, workspace, mobile
 from app.core.config import settings
 from app.services.ssh_pool import ssh_pool
 
@@ -48,6 +48,7 @@ app.include_router(usage.router, prefix="/api/v1/usage", tags=["usage"])
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["alerts"])
 app.include_router(catalog.router, prefix="/api/v1/catalog", tags=["catalog"])
 app.include_router(workspace.router, prefix="/api/v1/workspace", tags=["workspace"])
+app.include_router(mobile.router, prefix="/api/v1/mobile", tags=["mobile"])
 
 
 @app.get("/healthz")
