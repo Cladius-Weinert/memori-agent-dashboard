@@ -7,7 +7,7 @@ services:
     dockerfilePath: deploy/Dockerfile.api
     dockerContext: .
     region: singapore
-    plan: free
+    plan: starter
     healthCheckPath: /healthz
     envVars:
       - key: DATABASE_URL
@@ -44,13 +44,13 @@ services:
 
   - type: redis
     name: opsora-redis
-    plan: free
+    plan: starter
     region: singapore
     ipAllowList: []
 
 databases:
   - name: opsora-db
-    plan: free
+    plan: starter
     region: singapore
     databaseName: memori
     user: memori
