@@ -23,15 +23,16 @@ async def list_models() -> dict:
     ollama_status = "configured"
 
     models = [
-        {"id": "nvidia-llama", "provider": "NVIDIA", "name": "Llama-3.1-70B", "label": "Best balance", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
-        {"id": "nvidia-llama-405b", "provider": "NVIDIA", "name": "Llama-3.1-405B", "label": "High quality", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
-        {"id": "alibaba-qwen", "provider": "Alibaba/DashScope", "name": "Qwen2.5-72B", "label": "Large context", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "32K"},
-        {"id": "alibaba-qwen-plus", "provider": "Alibaba/DashScope", "name": "qwen-plus", "label": "Production (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "128K"},
-        {"id": "alibaba-qwen-turbo", "provider": "Alibaba/DashScope", "name": "qwen-turbo", "label": "Fast (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "8K"},
-        {"id": "tokenhub-deepseek", "provider": "TokenHub/Tencent", "name": "DeepSeek-V3", "label": "Fast reasoning", "status": tokenhub_status, "base_url": "https://open.toscloud.com/v1", "context": "128K"},
-        {"id": "tokenhub-deepseek-r1", "provider": "TokenHub/Tencent", "name": "DeepSeek-R1", "label": "Reasoning", "status": tokenhub_status, "base_url": "https://open.toscloud.com/v1", "context": "64K"},
-        {"id": "tokenhub-doubao", "provider": "TokenHub/Tencent", "name": "Doubao-Pro-32k", "label": "ByteDance", "status": tokenhub_status, "base_url": "https://open.toscloud.com/v1", "context": "32K"},
-        {"id": "bedrock-claude", "provider": "AWS Bedrock", "name": "Claude Sonnet", "label": "Production (AWS)", "status": bedrock_status, "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com", "context": "200K"},
-        {"id": "local-ollama", "provider": "Local/Ollama", "name": "Ollama", "label": "Free private", "status": ollama_status, "base_url": "http://localhost:11434", "context": "Dynamic"},
+        {"id": "nvidia-llama", "provider": "NVIDIA", "name": "meta/llama-3.1-70b-instruct", "label": "Best balance", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
+        {"id": "nvidia-nemotron", "provider": "NVIDIA", "name": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "label": "Orchestrator", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
+        {"id": "nvidia-llama-vision", "provider": "NVIDIA", "name": "meta/llama-3.2-90b-vision-instruct", "label": "Vision & UI", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
+        {"id": "nvidia-deepseek", "provider": "NVIDIA", "name": "deepseek-ai/deepseek-v4-pro", "label": "Deep reasoning", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
+        {"id": "alibaba-qwen-plus", "provider": "Alibaba/DashScope", "name": "qwen-plus", "label": "Production (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"), "context": "128K"},
+        {"id": "alibaba-qwen-turbo", "provider": "Alibaba/DashScope", "name": "qwen-turbo", "label": "Fast (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"), "context": "8K"},
+        {"id": "alibaba-qwen-max", "provider": "Alibaba/DashScope", "name": "qwen-max", "label": "Max quality", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"), "context": "32K"},
+        {"id": "tokenhub-deepseek", "provider": "Tencent TokenHub", "name": "deepseek-v3", "label": "Fast reasoning", "status": tokenhub_status, "base_url": "https://tokenhub.tencentmaas.com/v1", "context": "128K"},
+        {"id": "tokenhub-hunyuan", "provider": "Tencent TokenHub", "name": "hunyuan-standard", "label": "Hunyuan", "status": tokenhub_status, "base_url": "https://tokenhub.tencentmaas.com/v1", "context": "32K"},
+        {"id": "bedrock-claude", "provider": "AWS Bedrock", "name": "anthropic.claude-3-sonnet", "label": "Production (AWS)", "status": bedrock_status, "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com", "context": "200K"},
+        {"id": "local-ollama", "provider": "Local/Ollama", "name": "llama3.1", "label": "Free private", "status": ollama_status, "base_url": "http://localhost:11434", "context": "Dynamic"},
     ]
     return {"models": models, "total": len(models), "default": settings.LLM_MODEL or "meta/llama-3.1-70b-instruct"}
