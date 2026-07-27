@@ -12,6 +12,7 @@ from typing import Any
 from app.core.db import SessionLocal
 from app.models.models import Instance
 from app.services.ssh_pool import ssh_pool
+from app.services import workspace_fs
 from app.agent.safety import check_command, is_destructive
 
 
@@ -149,6 +150,60 @@ async def graphify_query(query: str) -> dict[str, Any]:
         return {"query": query, "error": "graphify CLI not found on PATH"}
 
 
+async def read_file(path: str) -> dict[str, Any]:
+    """Read a file from the workspace (relative path)."""
+    try:
+        return await asyncio.to_thread(workspace_fs.read_file, path)
+    except FileNotFoundError:
+        return {"error": f"file not found: {path}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+async def write_file(path: str, content: str) -> dict[str, Any]:
+    """Write content to a workspace file. Destructive overwrites require approval."""
+    requires_approval = True
+    try:
+        existing = await asyncio.to_thread(workspace_fs.read_file, path)
+        if existing.get("content") != content:
+            return {
+                "warning": "file write requires approval",
+                "requires_approval": requires_approval,
+                "path": path,
+                "preview": content[:500],
+            }
+    except FileNotFoundError:
+        requires_approval = False
+
+    if requires_approval:
+        return {
+            "warning": "file write requires approval",
+            "requires_approval": True,
+            "path": path,
+            "preview": content[:500],
+        }
+
+    try:
+        return await asyncio.to_thread(workspace_fs.write_file, path, content)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+async def list_files(path: str = "") -> dict[str, Any]:
+    """List workspace directory tree."""
+    try:
+        return await asyncio.to_thread(workspace_fs.list_tree, path, 3)
+    except FileNotFoundError:
+        return {"error": f"path not found: {path}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+async def search_code(query: str, path: str = "") -> dict[str, Any]:
+    """Search workspace source files for a query string."""
+    return await asyncio.to_thread(workspace_fs.search_code, query, path)
+
+
 # Tool registry exported for the planner
 TOOLS = [
     {
@@ -192,6 +247,30 @@ TOOLS = [
         "description": "Run a natural-language query against the Graphify knowledge graph and return results.",
         "parameters": {"query": "str"},
         "fn": graphify_query,
+    },
+    {
+        "name": "read_file",
+        "description": "Read a source file from the workspace by relative path.",
+        "parameters": {"path": "str"},
+        "fn": read_file,
+    },
+    {
+        "name": "write_file",
+        "description": "Write or overwrite a workspace file. Requires approval for existing files.",
+        "parameters": {"path": "str", "content": "str"},
+        "fn": write_file,
+    },
+    {
+        "name": "list_files",
+        "description": "List files and directories in the workspace.",
+        "parameters": {},
+        "fn": list_files,
+    },
+    {
+        "name": "search_code",
+        "description": "Search workspace files for a text pattern.",
+        "parameters": {"query": "str"},
+        "fn": search_code,
     },
 ]
 

@@ -7,7 +7,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import auth, instances, terminal, commands, agent, models, system, memory, conversations, usage, alerts, catalog, workspace
+from app.api.v1 import auth, instances, terminal, commands, agent, models, system, memory, conversations, usage, alerts, catalog, workspace, files
 from app.core.config import settings
 from app.services.ssh_pool import ssh_pool
 
@@ -22,8 +22,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Memori Agent & Dashboard API",
-    version="0.1.0",
+    title="Opsora Agent API",
+    version="0.5.0",
     lifespan=lifespan,
 )
 
@@ -48,6 +48,7 @@ app.include_router(usage.router, prefix="/api/v1/usage", tags=["usage"])
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["alerts"])
 app.include_router(catalog.router, prefix="/api/v1/catalog", tags=["catalog"])
 app.include_router(workspace.router, prefix="/api/v1/workspace", tags=["workspace"])
+app.include_router(files.router, prefix="/api/v1/files", tags=["files"])
 
 
 @app.get("/healthz")

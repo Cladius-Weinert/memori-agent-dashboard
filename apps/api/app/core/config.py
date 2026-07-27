@@ -20,8 +20,16 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "meta/llama-3.1-70b-instruct"
     LLM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+    WORKSPACE_ROOT: str = ""
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000"
     VAULT_ADDR: str = ""
+
+    def resolved_workspace_root(self) -> str:
+        if self.WORKSPACE_ROOT:
+            return self.WORKSPACE_ROOT
+        # Default: monorepo root (memori-agent-dashboard)
+        from pathlib import Path
+        return str(Path(__file__).resolve().parents[4])
 
     @field_validator("CORS_ORIGINS")
     @classmethod

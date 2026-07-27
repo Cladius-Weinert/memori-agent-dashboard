@@ -124,6 +124,9 @@ class TerminalCmdIn(BaseModel):
 # ---------- Agent ----------
 class AgentRunIn(BaseModel):
     goal: str
+    model: Optional[str] = None
+    mode: str = "agent"
+    conversation_id: Optional[int] = None
 
 
 class AgentJobRead(BaseModel):

@@ -27,12 +27,12 @@ export default function CommandPalette() {
   const router = useRouter();
 
   const commands: Command[] = [
-    { label: "Go to AI Agent", icon: Bot, action: () => router.push("/ai") },
+    { label: "Open Opsora Agent IDE", icon: Bot, action: () => router.push("/ide") },
     { label: "Go to Dashboard", icon: Server, action: () => router.push("/dashboard") },
     { label: "Go to Instances", icon: Server, action: () => router.push("/instances") },
     { label: "Go to Commands", icon: Terminal, action: () => router.push("/commands") },
     { label: "Go to Settings", icon: Settings, action: () => router.push("/settings") },
-    { label: "New Chat", icon: Bot, action: () => router.push("/ai?new=1") },
+    { label: "New Chat", icon: Bot, action: () => router.push("/ide") },
     {
       label: "Export Data",
       icon: Download,

@@ -48,7 +48,7 @@ async def workspace() -> dict:
     products = [
         {"name": "Opsora CLI", "description": "Terminal AI assistant with multi-provider routing", "status": "active", "url": None},
         {"name": "Opsora Dashboard", "description": "Web infrastructure management panel", "status": "active", "url": "/dashboard"},
-        {"name": "Opsora Agent", "description": "Autonomous AI agent with planning and delegation", "status": "active", "url": "/ai"},
+        {"name": "Opsora Agent", "description": "Cursor-style AI agent IDE", "status": "active", "url": "/ide"},
         {"name": "Opsora Agency", "description": "AI automation service for businesses", "status": "active", "url": None},
         {"name": "Opsora Chat", "description": "Open WebUI integration for conversations", "status": "active", "url": None},
         {"name": "Opsora Workflows", "description": "n8n automation workflows", "status": "active", "url": None},

@@ -66,14 +66,46 @@ export const commandsApi = {
 
 // Agent API
 export const agentApi = {
-  run: (goal: string) =>
+  run: (goal: string, opts?: { conversation_id?: number; model?: string; mode?: string }) =>
     fetch(apiUrl("/api/v1/agent/run"), {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify({ goal }),
-    }).then((r) => r.json()),
+      body: JSON.stringify({
+        goal,
+        conversation_id: opts?.conversation_id,
+        model: opts?.model,
+        mode: opts?.mode ?? "agent",
+      }),
+    }).then((r) => r.json()) as Promise<{ id: number; status: string; plan: unknown[] }>,
   getJob: (id: number) =>
     fetcher<{ id: number; status: string; plan: unknown[] }>(`/api/v1/agent/jobs/${id}`),
+};
+
+// Files API
+export const filesApi = {
+  tree: (path = "") => fetcher<{ entries: unknown[] }>(`/api/v1/files/tree?path=${encodeURIComponent(path)}`),
+  read: (path: string) => fetcher<{ content: string }>(`/api/v1/files/read?path=${encodeURIComponent(path)}`),
+  write: (path: string, content: string) =>
+    fetch(apiUrl("/api/v1/files/write"), {
+      method: "PUT",
+      headers: getHeaders(),
+      body: JSON.stringify({ path, content }),
+    }).then((r) => r.json()),
+  search: (q: string, path = "") =>
+    fetcher<{ matches: unknown[] }>(`/api/v1/files/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(path)}`),
+};
+
+// Conversations API
+export const conversationsApi = {
+  list: () => fetcher<Array<{ id: number; title: string; model: string }>>("/api/v1/conversations"),
+  create: (title: string, model = "default") =>
+    fetch(apiUrl("/api/v1/conversations"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ title, model }),
+    }).then((r) => r.json()) as Promise<{ id: number }>,
+  messages: (id: number) =>
+    fetcher<Array<{ id: number; role: string; content: string }>>(`/api/v1/conversations/${id}/messages`),
 };
 
 // WebSocket helper — includes auth token as query param
