@@ -1,0 +1,12 @@
+# Overlay when Docker cannot route between containers (some cloud sandboxes).
+# Web uses host networking; API stays on bridge for Supabase egress.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.hostnet.yml up -d --build
+
+services:
+  web:
+    network_mode: host
+    ports: []
+    command: ["npx", "next", "start", "-p", "3002"]
+    environment:
+      API_INTERNAL_URL: http://127.0.0.1:9001

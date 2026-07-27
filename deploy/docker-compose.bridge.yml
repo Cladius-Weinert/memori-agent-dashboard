@@ -1,0 +1,4 @@
+# API on bridge network for Supabase egress when compose network blocks outbound traffic.
+services:
+  api:
+    network_mode: bridge
