@@ -17,7 +17,7 @@ def _key(*env_vars: str) -> str:
     return "missing_key"
 
 
-@router.get("/models")
+@router.get("")
 async def list_models() -> dict:
     nvidia_status = _key("LLM_API_KEY", "NVIDIA_API_KEY", "NGC_CLI_API_KEY")
     dashscope_status = _key("DASHSCOPE_API_KEY")
