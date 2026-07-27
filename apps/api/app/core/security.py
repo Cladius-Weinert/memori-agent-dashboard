@@ -36,7 +36,12 @@ def create_mobile_access_token(subject: str | int, extra: dict[str, Any] | None 
 
 
 def decode_token(token: str) -> dict[str, Any]:
-    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(
+        token,
+        settings.JWT_SECRET,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"verify_aud": False},
+    )
     return payload
 
 
