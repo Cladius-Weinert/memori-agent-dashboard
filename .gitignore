@@ -16,3 +16,4 @@ build/
 .env
 .env.local
 .env.*.local
+deploy/.env

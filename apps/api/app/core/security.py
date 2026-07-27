@@ -4,20 +4,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def hash_password(password: str) -> str:
-    return _pwd_ctx.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def create_access_token(subject: str | int, extra: dict[str, Any] | None = None) -> str:
@@ -28,8 +26,22 @@ def create_access_token(subject: str | int, extra: dict[str, Any] | None = None)
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def create_mobile_access_token(subject: str | int, extra: dict[str, Any] | None = None) -> str:
+    """Long-lived token for Android — default 90 days."""
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.MOBILE_ACCESS_TOKEN_EXPIRE_DAYS)
+    payload: dict[str, Any] = {"sub": str(subject), "exp": expire, "aud": "mobile"}
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict[str, Any]:
-    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    payload = jwt.decode(
+        token,
+        settings.JWT_SECRET,
+        algorithms=[settings.JWT_ALGORITHM],
+        options={"verify_aud": False},
+    )
     return payload
 
 
