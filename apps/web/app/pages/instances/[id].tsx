@@ -1,11 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { Layout } from "@/app/components/Layout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Terminal, FileText, Activity, ArrowLeft, Server } from "lucide-react";
-import { instancesApi } from "@/app/api/api";
+import { Terminal, FileText, Activity, ArrowLeft } from "lucide-react";
+import { instancesApi, wsUrl } from "@/app/api/api";
+import { useIDEStore } from "@/app/stores/ideStore";
 import type { Instance } from "@/app/types";
+
+const XTermTerminal = dynamic(() => import("@/components/XTermTerminal"), { ssr: false });
 
 type Tab = "terminal" | "logs" | "metrics";
 
@@ -14,26 +18,15 @@ export default function InstanceDetailPage({ params }: { params: { id: string } 
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("terminal");
   const [inst, setInst] = useState<Instance | null>(null);
-  const [cmdResult, setCmdResult] = useState("");
-  const [cmdInput, setCmdInput] = useState("");
+  const setTerminalInstanceId = useIDEStore((s) => s.setTerminalInstanceId);
 
   useEffect(() => {
-    instancesApi.get(id).then(setInst).catch(console.error);
-  }, [id]);
-
-  const runCmd = async (cmd: string) => {
-    if (!cmd.trim()) return;
-    setCmdResult(`$ ${cmd}\n`);
-    try {
-      const res = await fetch(
-        `/api/v1/instances/${id}/run-command?command=${encodeURIComponent(cmd)}`
-      );
-      const data = await res.json();
-      setCmdResult((prev) => prev + (data.stdout ?? data.stderr ?? "no output"));
-    } catch (err) {
-      setCmdResult((prev) => prev + `Error: ${err}`);
-    }
-  };
+    instancesApi.get(id).then((i) => {
+      setInst(i);
+      setTerminalInstanceId(id);
+    }).catch(console.error);
+    return () => setTerminalInstanceId(null);
+  }, [id, setTerminalInstanceId]);
 
   const TABS: { key: Tab; label: string; icon: typeof Terminal }[] = [
     { key: "terminal", label: "Terminal", icon: Terminal },
@@ -114,49 +107,8 @@ export default function InstanceDetailPage({ params }: { params: { id: string } 
 
         {/* Terminal tab */}
         {tab === "terminal" && (
-          <div className="space-y-3">
-            <div
-              className="log-block"
-              style={{ minHeight: "200px", maxHeight: "400px" }}
-            >
-              {cmdResult || (
-                <span style={{ color: "var(--t3)" }}>
-                  # Run a command below to see output{"\n"}
-                  # Connected to {inst?.host ?? "..."}
-                </span>
-              )}
-            </div>
-            <div className="input-bar">
-              <span
-                style={{
-                  color: "var(--accent)",
-                  fontFamily: "var(--mono)",
-                  fontSize: "12px",
-                  paddingLeft: "8px",
-                }}
-              >
-                $
-              </span>
-              <input
-                className="input-mono"
-                placeholder="ls -la"
-                value={cmdInput}
-                onChange={(e) => setCmdInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    runCmd(cmdInput);
-                    setCmdInput("");
-                  }
-                }}
-              />
-              <button
-                onClick={() => runCmd(cmdInput)}
-                disabled={!cmdInput.trim()}
-                className="send-btn"
-              >
-                <Terminal size={14} />
-              </button>
-            </div>
+          <div className="space-y-3" style={{ minHeight: "320px" }}>
+            <XTermTerminal wsUrl={wsUrl(id)} className="h-[320px]" />
           </div>
         )}
 

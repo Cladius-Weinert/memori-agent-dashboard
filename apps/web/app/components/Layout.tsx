@@ -18,7 +18,7 @@ import CommandPalette from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/Toast";
 
 const NAV = [
-  { href: "/ai", label: "AI Agent", icon: Bot },
+  { href: "/ide", label: "Opsora Agent", icon: Bot },
   { href: "/dashboard", label: "Activity", icon: LayoutDashboard },
   { href: "/instances", label: "Instances", icon: Server },
   { href: "/commands", label: "Commands", icon: Zap },
@@ -42,8 +42,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-header">
-            <span className="sidebar-logo">MEMORI</span>
-            <span className="sidebar-version">v0.4</span>
+            <span className="sidebar-logo">OPSORA</span>
+            <span className="sidebar-version">Agent</span>
           </div>
 
           <nav className="sidebar-nav">

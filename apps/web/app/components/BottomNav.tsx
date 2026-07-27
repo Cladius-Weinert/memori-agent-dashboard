@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 const TABS = [
-  { href: "/ai", label: "AI", icon: Bot },
+  { href: "/ide", label: "Agent", icon: Bot },
   { href: "/dashboard", label: "Activity", icon: LayoutDashboard },
   { href: "/instances", label: "Instances", icon: Server },
   { href: "/commands", label: "Commands", icon: Zap },

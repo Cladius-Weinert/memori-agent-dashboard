@@ -66,14 +66,90 @@ export const commandsApi = {
 
 // Agent API
 export const agentApi = {
-  run: (goal: string) =>
+  run: (goal: string, opts?: { conversation_id?: number; model?: string; mode?: string }) =>
     fetch(apiUrl("/api/v1/agent/run"), {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify({ goal }),
-    }).then((r) => r.json()),
+      body: JSON.stringify({
+        goal,
+        conversation_id: opts?.conversation_id,
+        model: opts?.model,
+        mode: opts?.mode ?? "agent",
+      }),
+    }).then((r) => r.json()) as Promise<{ id: number; status: string; plan: unknown[] }>,
   getJob: (id: number) =>
     fetcher<{ id: number; status: string; plan: unknown[] }>(`/api/v1/agent/jobs/${id}`),
+};
+
+// Files API
+export const filesApi = {
+  tree: (path = "") => fetcher<{ entries: unknown[] }>(`/api/v1/files/tree?path=${encodeURIComponent(path)}`),
+  read: (path: string) => fetcher<{ content: string }>(`/api/v1/files/read?path=${encodeURIComponent(path)}`),
+  write: (path: string, content: string) =>
+    fetch(apiUrl("/api/v1/files/write"), {
+      method: "PUT",
+      headers: getHeaders(),
+      body: JSON.stringify({ path, content }),
+    }).then((r) => r.json()),
+  search: (q: string, path = "") =>
+    fetcher<{ matches: unknown[] }>(`/api/v1/files/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(path)}`),
+};
+
+// Conversations API
+export const conversationsApi = {
+  list: () => fetcher<Array<{ id: number; title: string; model: string }>>("/api/v1/conversations"),
+  create: (title: string, model = "default") =>
+    fetch(apiUrl("/api/v1/conversations"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ title, model }),
+    }).then((r) => r.json()) as Promise<{ id: number }>,
+  messages: (id: number) =>
+    fetcher<Array<{ id: number; role: string; content: string }>>(`/api/v1/conversations/${id}/messages`),
+};
+
+// Git API
+export const gitApi = {
+  status: () => fetcher<{
+    branch?: string;
+    clean?: boolean;
+    staged?: Array<{ path: string; status: string }>;
+    unstaged?: Array<{ path: string; status: string }>;
+    untracked?: string[];
+  }>("/api/v1/git/status"),
+  diff: (path = "", staged = false) =>
+    fetcher<{ raw?: string; hunks?: Array<{ lines: unknown[] }>; has_changes?: boolean }>(
+      `/api/v1/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+    ),
+  branches: () => fetcher<{ current?: string; branches: string[] }>("/api/v1/git/branches"),
+  log: (limit = 15) => fetcher<{ commits: Array<{ hash: string; message: string }> }>(`/api/v1/git/log?limit=${limit}`),
+  add: (paths: string[]) =>
+    fetch(apiUrl("/api/v1/git/add"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ paths }),
+    }).then((r) => r.json()),
+  commit: (message: string) =>
+    fetch(apiUrl("/api/v1/git/commit"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ message }),
+    }).then((r) => {
+      if (!r.ok) return r.json().then((e) => { throw new Error(e.detail || "commit failed"); });
+      return r.json();
+    }),
+  checkout: (branch: string) =>
+    fetch(apiUrl("/api/v1/git/checkout"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ branch }),
+    }).then((r) => r.json()),
+  textDiff: (path: string, content: string) =>
+    fetch(apiUrl("/api/v1/git/text-diff"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ path, content }),
+    }).then((r) => r.json()) as Promise<{ has_changes: boolean; lines: Array<{ type: string; text: string }> }>,
 };
 
 // WebSocket helper — includes auth token as query param

@@ -10,21 +10,25 @@ from app.core.config import settings
 router = APIRouter()
 
 
-def _key(env_var: str) -> str:
-    return "configured" if os.getenv(env_var) else "missing_key"
+def _key(*env_vars: str) -> str:
+    for env_var in env_vars:
+        if os.getenv(env_var):
+            return "configured"
+    return "missing_key"
 
 
 @router.get("/models")
 async def list_models() -> dict:
-    nvidia_status = _key("NVIDIA_API_KEY")
+    nvidia_status = _key("LLM_API_KEY", "NVIDIA_API_KEY", "NGC_CLI_API_KEY")
     dashscope_status = _key("DASHSCOPE_API_KEY")
     tokenhub_status = _key("TOKENHUB_API_KEY")
     bedrock_status = "configured" if os.getenv("AWS_PROFILE") or os.getenv("AWS_ACCESS_KEY_ID") else "missing_key"
     ollama_status = "configured"
 
     models = [
-        {"id": "nvidia-llama", "provider": "NVIDIA", "name": "Llama-3.1-70B", "label": "Best balance", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
-        {"id": "nvidia-llama-405b", "provider": "NVIDIA", "name": "Llama-3.1-405B", "label": "High quality", "status": nvidia_status, "base_url": "https://integrate.api.nvidia.com/v1", "context": "128K"},
+        {"id": "nvidia-llama", "provider": "NVIDIA", "name": "Llama-3.1-70B", "label": "Best balance", "status": nvidia_status, "base_url": settings.LLM_BASE_URL, "context": "128K"},
+        {"id": "nvidia-mistral-nemo", "provider": "NVIDIA", "name": "Mistral NeMo", "label": "Fast GPU", "status": nvidia_status, "base_url": settings.LLM_BASE_URL, "context": "128K"},
+        {"id": "nvidia-qwen3-80b", "provider": "NVIDIA NVCF", "name": "Qwen3-Next-80B", "label": "High quality (NVCF)", "status": nvidia_status, "base_url": "https://api.nvcf.nvidia.com/v2/nvcf", "context": "128K"},
         {"id": "alibaba-qwen", "provider": "Alibaba/DashScope", "name": "Qwen2.5-72B", "label": "Large context", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "32K"},
         {"id": "alibaba-qwen-plus", "provider": "Alibaba/DashScope", "name": "qwen-plus", "label": "Production (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "128K"},
         {"id": "alibaba-qwen-turbo", "provider": "Alibaba/DashScope", "name": "qwen-turbo", "label": "Fast (Alibaba)", "status": dashscope_status, "base_url": os.getenv("ALIBABA_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "context": "8K"},
