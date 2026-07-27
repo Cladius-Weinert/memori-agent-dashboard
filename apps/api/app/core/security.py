@@ -26,6 +26,15 @@ def create_access_token(subject: str | int, extra: dict[str, Any] | None = None)
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def create_mobile_access_token(subject: str | int, extra: dict[str, Any] | None = None) -> str:
+    """Long-lived token for Android — default 90 days."""
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.MOBILE_ACCESS_TOKEN_EXPIRE_DAYS)
+    payload: dict[str, Any] = {"sub": str(subject), "exp": expire, "aud": "mobile"}
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
 def decode_token(token: str) -> dict[str, Any]:
     payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     return payload

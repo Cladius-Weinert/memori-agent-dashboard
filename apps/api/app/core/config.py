@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "dev-secret-change-me"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    MOBILE_ACCESS_TOKEN_EXPIRE_DAYS: int = 90
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "meta/llama-3.1-70b-instruct"
     LLM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"

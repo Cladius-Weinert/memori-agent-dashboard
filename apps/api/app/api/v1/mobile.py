@@ -5,7 +5,7 @@ import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ from app.services.user_config import list_mcp_servers, list_providers, upsert_mc
 from app.services.elastic_observability import status as elastic_status
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, create_mobile_access_token, hash_password, verify_password
 from app.models.models import User
 
 router = APIRouter()
@@ -29,6 +29,15 @@ router = APIRouter()
 MOBILE_EMAIL = os.getenv("MOBILE_AUTO_EMAIL", "mobile@opsora.id")
 MOBILE_PASSWORD = os.getenv("MOBILE_AUTO_PASSWORD", "opsora-mobile-2026")
 MOBILE_NAME = os.getenv("MOBILE_AUTO_NAME", "Opsora Mobile")
+PERMANENT_GATEWAY = os.getenv(
+    "OPSORA_PERMANENT_GATEWAY",
+    "https://mwbgkkthwwlcndccnbnf.supabase.co/functions/v1/opsora-api",
+)
+
+
+class MobileLoginIn(BaseModel):
+    email: str
+    password: str
 
 
 class ChatIn(BaseModel):
@@ -70,22 +79,20 @@ async def _ensure_mobile_user(session: AsyncSession) -> User:
     return user
 
 
-@router.get("/bootstrap")
-async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    """One-call setup: auth token + models + catalog + endpoints."""
-    user = await _ensure_mobile_user(session)
-    token = create_access_token(user.id)
+async def _mobile_payload(session: AsyncSession, user: User) -> dict[str, Any]:
+    token = create_mobile_access_token(user.id)
     models = await list_models()
     cat = await build_catalog(user.id)
     user_providers = list_providers(user.id)
-
     nvidia_ok = bool(settings.LLM_API_KEY or os.getenv("NVIDIA_API_KEY"))
 
     return {
         "access_token": token,
         "token_type": "bearer",
+        "expires_in_days": settings.MOBILE_ACCESS_TOKEN_EXPIRE_DAYS,
         "user": {"id": user.id, "email": user.email, "full_name": user.full_name},
-        "api_version": "1.5",
+        "api_version": "1.6",
+        "permanent_api_url": PERMANENT_GATEWAY,
         "llm": {
             "default_model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
@@ -115,6 +122,35 @@ async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str,
         },
         "provider_presets": PROVIDER_PRESETS,
     }
+
+
+@router.get("/bootstrap")
+async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """One-call setup: auth token + models + catalog. No password needed."""
+    user = await _ensure_mobile_user(session)
+    return await _mobile_payload(session, user)
+
+
+@router.post("/login")
+async def mobile_login(data: MobileLoginIn, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Login with email + password — returns same payload as bootstrap."""
+    user = await session.scalar(select(User).where(User.email == data.email))
+    if not user or not verify_password(data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Email atau password salah")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Akun tidak aktif")
+    ensure_default_mcp_servers(user.id)
+    return await _mobile_payload(session, user)
+
+
+@router.post("/refresh")
+async def mobile_refresh(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Refresh JWT — call when token near expiry or after 401."""
+    ensure_default_mcp_servers(current_user.id)
+    return await _mobile_payload(session, current_user)
 
 
 class MultiAgentIn(BaseModel):
