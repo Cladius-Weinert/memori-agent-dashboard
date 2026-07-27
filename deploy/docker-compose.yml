@@ -1,6 +1,7 @@
 
 services:
   db:
+    profiles: [local-db]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -28,9 +29,9 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.api
     restart: unless-stopped
+    network_mode: ${API_NETWORK_MODE:-bridge}
     env_file: .env
     depends_on:
-      db: { condition: service_healthy }
       redis: { condition: service_started }
     ports:
       - "9001:8000"
@@ -40,12 +41,23 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       WORKSPACE_ROOT: /workspace
-      # Override via deploy/.env — use host.docker.internal:5433 if inter-container DB networking fails
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://memori:memori@db:5432/memori?ssl=disable}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_SCHEMA: ${DB_SCHEMA:-agent}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_PROJECT_REF: ${SUPABASE_PROJECT_REF:-}
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
+      SUPABASE_POOLER_HOST: ${SUPABASE_POOLER_HOST:-aws-0-ap-southeast-1.pooler.supabase.com}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
     command: >
-      sh -c "for i in $$(seq 1 30); do python -c \"import socket; s=socket.create_connection(('db',5432),2); s.close()\" 2>/dev/null && break; sleep 1; done;
-      timeout 90 alembic upgrade head || echo 'migration skipped';
+      sh -c "if [ -n \"$$SUPABASE_ANON_KEY\" ]; then
+        echo 'Using Supabase REST API — skipping local alembic';
+      elif echo \"$$DATABASE_URL\" | grep -qi supabase; then
+        echo 'Using Supabase Postgres URL — skipping local alembic';
+      else
+        for i in $$(seq 1 30); do python -c \"import socket; s=socket.create_connection(('host.docker.internal',5433),2); s.close()\" 2>/dev/null && break; sleep 1; done;
+        timeout 90 alembic upgrade head || echo 'migration skipped';
+      fi;
       exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   web:
@@ -59,7 +71,7 @@ services:
       - "3002:3000"
     environment:
       NEXT_PUBLIC_API_URL: ""
-      API_INTERNAL_URL: http://api:8000
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8000}
 
 volumes:
   pgdata:

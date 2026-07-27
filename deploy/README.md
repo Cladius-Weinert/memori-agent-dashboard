@@ -102,15 +102,29 @@ Or use GitHub Actions (set repo secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`):
 # .github/workflows/deploy-vps.yml — see repo
 ```
 
-## External Database (Supabase fallback)
+## Supabase Database (recommended)
 
-If Docker Postgres is unreliable, point `DATABASE_URL` at Supabase Postgres (project `opsora-prod`):
+Opsora Agent uses schema **`agent`** in project **`opsora-prod`** (`mwbgkkthwwlcndccnbnf`, Singapore).
 
+**No database password needed** — the API uses Supabase REST (PostgREST) with your **anon API key**:
+
+```bash
+cp deploy/.env.example deploy/.env
+# Set SUPABASE_ANON_KEY from Dashboard → Settings → API → anon public
+# (Cursor Supabase MCP can read this via get_publishable_keys)
+bash deploy/deploy-production.sh
 ```
-DATABASE_URL=postgresql+asyncpg://postgres.[ref]:[password]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?ssl=require
+
+Required env vars:
+
+```bash
+SUPABASE_PROJECT_REF=mwbgkkthwwlcndccnbnf
+SUPABASE_URL=https://mwbgkkthwwlcndccnbnf.supabase.co
+SUPABASE_ANON_KEY=<anon-key-from-dashboard>
+DB_SCHEMA=agent
 ```
 
-Run migrations once: `cd apps/api && alembic upgrade head`
+Schema `agent` is pre-migrated. Local Postgres is not started when `SUPABASE_ANON_KEY` is set.
 
 ## Terraform Provisioning
 

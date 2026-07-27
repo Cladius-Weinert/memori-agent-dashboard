@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://memori:memori@localhost:5432/memori"
+    DB_SCHEMA: str = "agent"
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_PROJECT_REF: str = ""
+    SUPABASE_DB_PASSWORD: str = ""
+    SUPABASE_POOLER_HOST: str = "aws-0-ap-southeast-1.pooler.supabase.com"
     REDIS_URL: str = "redis://localhost:6379/0"
     JWT_SECRET: str = "dev-secret-change-me"
     JWT_ALGORITHM: str = "HS256"
@@ -27,7 +33,6 @@ class Settings(BaseSettings):
     def resolved_workspace_root(self) -> str:
         if self.WORKSPACE_ROOT:
             return self.WORKSPACE_ROOT
-        # Default: monorepo root (memori-agent-dashboard)
         from pathlib import Path
         return str(Path(__file__).resolve().parents[4])
 
@@ -38,5 +43,29 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
+    def resolved_supabase_url(self) -> str:
+        if self.SUPABASE_URL:
+            return self.SUPABASE_URL
+        if self.SUPABASE_PROJECT_REF:
+            return f"https://{self.SUPABASE_PROJECT_REF}.supabase.co"
+        return ""
+
+    def resolved_database_url(self) -> str:
+        if self.SUPABASE_PROJECT_REF and self.SUPABASE_DB_PASSWORD:
+            ref = self.SUPABASE_PROJECT_REF
+            pwd = self.SUPABASE_DB_PASSWORD
+            host = self.SUPABASE_POOLER_HOST
+            return (
+                f"postgresql+asyncpg://postgres.{ref}:{pwd}@{host}:6543/postgres?ssl=require"
+            )
+        return self.DATABASE_URL
+
 
 settings = Settings()
+settings.SUPABASE_URL = settings.resolved_supabase_url()
+if not (settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY):
+    settings.DATABASE_URL = settings.resolved_database_url()
+
+
+def use_supabase_rest() -> bool:
+    return bool(settings.SUPABASE_URL and settings.SUPABASE_ANON_KEY)
