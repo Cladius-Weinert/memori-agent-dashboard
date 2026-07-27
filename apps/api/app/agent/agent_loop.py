@@ -201,7 +201,7 @@ async def run_tool_loop(
             "type": "activity",
             "kind": "tool",
             "status": "running",
-            "text": tool_name,
+            "text": _tool_label(tool_name),
             "detail": decision.get("reason", ""),
             "key": f"tool-{iteration}-{tool_name}",
         }
@@ -238,7 +238,7 @@ async def run_tool_loop(
             "type": "activity",
             "kind": "tool",
             "status": "done",
-            "text": tool_name,
+            "text": _tool_label(tool_name),
             "detail": _activity_detail(result),
             "key": f"tool-{iteration}-{tool_name}",
             "output": _activity_detail(result),
@@ -327,8 +327,8 @@ async def run_single_model_agent(
                     "type": "activity",
                     "kind": "thinking",
                     "status": "done",
-                    "text": "Planning",
-                    "detail": f"{ev.get('max_iterations', 12)} steps max",
+                    "text": "Thinking",
+                    "detail": "",
                     "key": "thinking",
                 }
             yield ev
@@ -399,7 +399,34 @@ def _activity_detail(result: dict[str, Any]) -> str:
         return str(result["stdout"])[:120]
     if result.get("body"):
         return str(result["body"])[:120]
+    # Prefer short human messages over raw table/column dumps
+    for key in ("message", "summary", "status", "ok"):
+        if key in result and result[key] not in (None, ""):
+            val = result[key]
+            if isinstance(val, bool):
+                return "ok" if val else "gagal"
+            return str(val)[:120]
+    if result.get("todos") and isinstance(result["todos"], list):
+        return f"{len(result['todos'])} todo"
+    if result.get("id") and result.get("title"):
+        return str(result["title"])[:120]
     return ""
+
+
+def _tool_label(name: str) -> str:
+    labels = {
+        "run_local_command": "Terminal",
+        "github_run": "GitHub",
+        "todo_create": "Todo",
+        "todo_list": "Todo",
+        "todo_update": "Todo",
+        "todo_delete": "Todo",
+        "system_health": "Sistem",
+        "webfetch": "Web",
+        "mcp_invoke": "MCP",
+        "web_search": "Pencarian",
+    }
+    return labels.get(name, name.replace("_", " ").title())
 
 
 def _repl_lines(result: dict[str, Any]) -> list[str]:
