@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.multi_agent import AGENT_LABELS, AGENT_MODELS, AgentRole, run_multi_agent
 from app.api.v1.auth import get_current_user
-from app.api.v1.catalog import catalog as catalog_data
+from app.api.v1.catalog import build_catalog
 from app.api.v1.models import list_models
+from app.api.v1.settings import McpServerIn, ProviderIn
+from app.services.user_config import list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider, delete_mcp_server, delete_provider, PROVIDER_PRESETS
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password, verify_password
@@ -71,24 +73,24 @@ async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str,
     user = await _ensure_mobile_user(session)
     token = create_access_token(user.id)
     models = await list_models()
-    cat = await catalog_data()
+    cat = await build_catalog(user.id)
+    user_providers = list_providers(user.id)
 
     nvidia_ok = bool(settings.LLM_API_KEY or os.getenv("NVIDIA_API_KEY"))
-    dashscope_ok = bool(os.getenv("DASHSCOPE_API_KEY"))
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": {"id": user.id, "email": user.email, "full_name": user.full_name},
-        "api_version": "1.0",
+        "api_version": "1.5",
         "llm": {
             "default_model": settings.LLM_MODEL,
             "base_url": settings.LLM_BASE_URL,
             "nvidia_connected": nvidia_ok,
-            "dashscope_connected": dashscope_ok,
         },
         "models": models["models"],
         "default_model": models["default"],
+        "user_providers": user_providers,
         "catalog": cat,
         "orchestrator": {
             "host": os.getenv("ORCHESTRATOR_HOST", "54.81.31.132"),
@@ -99,14 +101,14 @@ async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str,
             "agent": True,
             "multi_agent": True,
             "agent_loop": True,
-            "mcp_tools": True,
-            "orchestrator": True,
-            "cloud_consoles": True,
+            "mcp_custom": True,
+            "providers_custom": True,
         },
-        "nvidia_agents": {
+        "agents": {
             role.value: {"model": model, "label": AGENT_LABELS[role]}
             for role, model in AGENT_MODELS.items()
         },
+        "provider_presets": PROVIDER_PRESETS,
     }
 
 
@@ -124,7 +126,7 @@ async def mobile_multi_agent(
     """SSE stream: NVIDIA multi-agent loop (orchestrator → visual → executor)."""
 
     async def stream():
-        async for event in run_multi_agent(data.goal, data.mode, data.history):
+        async for event in run_multi_agent(data.goal, data.mode, data.history, user_id=current_user.id):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
@@ -194,3 +196,47 @@ async def mobile_chat_stream(
         yield f"data: {json.dumps({'type': 'done', 'model': model})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.get("/settings/providers")
+async def mobile_list_providers(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return {"providers": list_providers(current_user.id), "presets": PROVIDER_PRESETS}
+
+
+@router.post("/settings/providers")
+async def mobile_save_provider(
+    data: ProviderIn,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return {"provider": upsert_provider(current_user.id, data.model_dump())}
+
+
+@router.delete("/settings/providers/{provider_id}")
+async def mobile_delete_provider(
+    provider_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    delete_provider(current_user.id, provider_id)
+    return {"status": "deleted"}
+
+
+@router.get("/settings/mcp")
+async def mobile_list_mcp(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return {"servers": list_mcp_servers(current_user.id)}
+
+
+@router.post("/settings/mcp")
+async def mobile_save_mcp(
+    data: McpServerIn,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    return {"server": upsert_mcp_server(current_user.id, data.model_dump())}
+
+
+@router.delete("/settings/mcp/{server_id}")
+async def mobile_delete_mcp(
+    server_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    delete_mcp_server(current_user.id, server_id)
+    return {"status": "deleted"}

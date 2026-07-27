@@ -183,8 +183,11 @@ async def run_multi_agent(
     goal: str,
     mode: str = "chat",
     history: list[dict[str, str]] | None = None,
+    user_id: int | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield SSE-style events as each NVIDIA sub-agent runs."""
+    from app.agent.tools import set_tool_user
+    set_tool_user(user_id)
     state = MultiAgentState(goal=goal, mode=mode)
     agents = _classify_goal(goal, mode)
     context_parts: list[str] = []
@@ -209,6 +212,13 @@ async def run_multi_agent(
                 "label": AGENT_LABELS[role],
                 "model": AGENT_MODELS[role],
                 "loop": state.loop_count,
+            }
+            yield {
+                "type": "activity",
+                "kind": "agent",
+                "status": "running",
+                "text": AGENT_LABELS[role],
+                "detail": AGENT_MODELS[role].split("/")[-1],
             }
 
             ctx = "\n".join(context_parts)
@@ -255,6 +265,13 @@ async def run_multi_agent(
                 "model": model,
                 "output": step.output[:800],
                 "plan": state.plan,
+            }
+            yield {
+                "type": "activity",
+                "kind": "agent",
+                "status": "done",
+                "text": AGENT_LABELS[role],
+                "detail": step.output[:160],
             }
 
         # Tool loop after first orchestration pass

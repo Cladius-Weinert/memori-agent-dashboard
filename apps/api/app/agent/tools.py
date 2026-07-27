@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -16,6 +17,12 @@ from app.core.db import SessionLocal
 from app.models.models import Instance
 from app.services.ssh_pool import ssh_pool
 from app.agent.safety import check_command, is_destructive
+
+_user_id_ctx: ContextVar[int | None] = ContextVar("opsora_user_id", default=None)
+
+
+def set_tool_user(user_id: int | None) -> None:
+    _user_id_ctx.set(user_id)
 
 # Paths the agent may read/write locally.
 _ALLOWED_WRITE_ROOTS = (
@@ -255,6 +262,32 @@ async def run_local_command(command: str, cwd: str | None = None) -> dict[str, A
         return {"error": f"command timed out after {_LOCAL_CMD_TIMEOUT}s", "command": command}
 
 
+async def mcp_invoke(server: str, tool: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call a tool on a user-configured custom MCP HTTP endpoint."""
+    uid = _user_id_ctx.get()
+    if uid is None:
+        return {"error": "no user context for MCP"}
+    from app.services.user_config import get_mcp_auth, list_mcp_servers
+
+    servers = [s for s in list_mcp_servers(uid) if s.get("enabled", True)]
+    target = next((s for s in servers if s.get("name") == server or s.get("id") == server), None)
+    if not target:
+        return {"error": f"mcp server not found: {server}", "available": [s.get("name") for s in servers]}
+
+    token = get_mcp_auth(uid, target["id"])
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    payload = {"tool": tool, "arguments": arguments or {}}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(target["url"], json=payload, headers=headers)
+            return {"server": target["name"], "status": resp.status_code, "result": resp.text[:4000]}
+    except httpx.HTTPError as exc:
+        return {"error": str(exc), "server": target["name"]}
+
+
 async def graphify_query(query: str) -> dict[str, Any]:
     """Run a graphify query and return the result."""
     graphify_root = os.environ.get("GRAPHIFY_ROOT", "/home/ubuntu")
@@ -345,6 +378,12 @@ TOOLS = [
         "description": "Run a shell command on the API host (terminal). Destructive commands require approval.",
         "parameters": {"command": "str", "cwd": "str | None"},
         "fn": run_local_command,
+    },
+    {
+        "name": "mcp_invoke",
+        "description": "Invoke a tool on a user-configured custom MCP server.",
+        "parameters": {"server": "str", "tool": "str", "arguments": "dict"},
+        "fn": mcp_invoke,
     },
 ]
 

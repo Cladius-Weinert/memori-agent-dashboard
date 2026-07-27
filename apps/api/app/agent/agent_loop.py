@@ -179,6 +179,13 @@ async def run_tool_loop(
             "reason": decision.get("reason", ""),
             "model": model,
         }
+        yield {
+            "type": "activity",
+            "kind": "tool",
+            "status": "running",
+            "text": f"› {tool_name}",
+            "detail": decision.get("reason", ""),
+        }
 
         result = await call_tool(tool_name, **args)
         entry = {"iteration": iteration, "tool": tool_name, "args": args, "result": result}
@@ -208,6 +215,16 @@ async def run_tool_loop(
             "args": args,
             "result": _truncate_result(result),
         }
+        yield {
+            "type": "activity",
+            "kind": "tool",
+            "status": "done",
+            "text": f"✓ {tool_name}",
+            "detail": _activity_detail(result),
+        }
+        for line in _repl_lines(result):
+            yield {"type": "activity", "kind": "repl", "status": "done", "text": line}
+            yield {"type": "repl_line", "text": line}
 
         # Quick reflect every 3 steps or on last iteration
         if iteration % 3 == 0 or iteration == max_iterations:
@@ -252,3 +269,26 @@ def _truncate_result(result: dict[str, Any], limit: int = 1200) -> dict[str, Any
         else:
             out[k] = v
     return out
+
+
+def _activity_detail(result: dict[str, Any]) -> str:
+    if result.get("error"):
+        return str(result["error"])[:200]
+    if result.get("stdout"):
+        return str(result["stdout"])[:120]
+    if result.get("body"):
+        return str(result["body"])[:120]
+    return ""
+
+
+def _repl_lines(result: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for key in ("stdout", "stderr", "body"):
+        val = result.get(key)
+        if isinstance(val, str) and val.strip():
+            for ln in val.strip().split("\n")[:12]:
+                prefix = "$ " if key == "stdout" else ("! " if key == "stderr" else "> ")
+                lines.append(f"{prefix}{ln[:200]}")
+    if result.get("exit_code") is not None:
+        lines.append(f"exit {result['exit_code']}")
+    return lines
