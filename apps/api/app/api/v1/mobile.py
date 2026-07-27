@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.multi_agent import AGENT_LABELS, AGENT_MODELS, AgentRole, run_multi_agent
 from app.api.v1.auth import get_current_user
 from app.api.v1.catalog import catalog as catalog_data
 from app.api.v1.models import list_models
@@ -96,11 +97,36 @@ async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str,
         "features": {
             "chat": True,
             "agent": True,
+            "multi_agent": True,
             "mcp_tools": True,
             "orchestrator": True,
             "cloud_consoles": True,
         },
+        "nvidia_agents": {
+            role.value: {"model": model, "label": AGENT_LABELS[role]}
+            for role, model in AGENT_MODELS.items()
+        },
     }
+
+
+class MultiAgentIn(BaseModel):
+    goal: str
+    mode: str = "chat"
+    history: list[dict[str, str]] = []
+
+
+@router.post("/multi-agent/run")
+async def mobile_multi_agent(
+    data: MultiAgentIn,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """SSE stream: NVIDIA multi-agent loop (orchestrator → visual → executor)."""
+
+    async def stream():
+        async for event in run_multi_agent(data.goal, data.mode, data.history):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @router.post("/chat", response_model=ChatOut)
