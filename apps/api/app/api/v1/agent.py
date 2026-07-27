@@ -50,9 +50,9 @@ async def run_agent_job(
 
 
 async def _run_agent_background(job_id: int, goal: str, conversation_id: int | None = None) -> None:
-    from app.core.db import SessionLocal
+    from app.core.db import open_session
     final_response = ""
-    async with SessionLocal() as session:
+    async with open_session() as session:
         job = await session.get(AgentJob, job_id)
         if not job:
             return
@@ -119,12 +119,12 @@ async def stream_agent_job(
         raise HTTPException(status_code=404, detail="agent job not found")
 
     async def event_generator() -> AsyncIterator[str]:
-        from app.core.db import SessionLocal
+        from app.core.db import open_session
         last_action_count = 0
         sent_plan = False
         sent_message = False
         while True:
-            async with SessionLocal() as s:
+            async with open_session() as s:
                 j = await s.get(AgentJob, job_id)
                 if not j:
                     break

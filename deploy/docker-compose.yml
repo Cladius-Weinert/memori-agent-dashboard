@@ -43,13 +43,17 @@ services:
       WORKSPACE_ROOT: /workspace
       DATABASE_URL: ${DATABASE_URL:-}
       DB_SCHEMA: ${DB_SCHEMA:-agent}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
       SUPABASE_PROJECT_REF: ${SUPABASE_PROJECT_REF:-}
       SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-}
       SUPABASE_POOLER_HOST: ${SUPABASE_POOLER_HOST:-aws-0-ap-southeast-1.pooler.supabase.com}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://integrate.api.nvidia.com/v1}
     command: >
-      sh -c "if echo \"$$DATABASE_URL$$SUPABASE_PROJECT_REF\" | grep -qi supabase || [ -n \"$$SUPABASE_PROJECT_REF\" ]; then
-        echo 'Using Supabase — skipping local alembic';
+      sh -c "if [ -n \"$$SUPABASE_ANON_KEY\" ]; then
+        echo 'Using Supabase REST API — skipping local alembic';
+      elif echo \"$$DATABASE_URL\" | grep -qi supabase; then
+        echo 'Using Supabase Postgres URL — skipping local alembic';
       else
         for i in $$(seq 1 30); do python -c \"import socket; s=socket.create_connection(('host.docker.internal',5433),2); s.close()\" 2>/dev/null && break; sleep 1; done;
         timeout 90 alembic upgrade head || echo 'migration skipped';

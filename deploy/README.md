@@ -104,28 +104,27 @@ Or use GitHub Actions (set repo secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`):
 
 ## Supabase Database (recommended)
 
-Opsora Agent uses schema **`agent`** in project **`opsora-prod`** (`mwbgkkthwwlcndccnbnf`, Singapore) — isolated from CRM tables in `public`.
+Opsora Agent uses schema **`agent`** in project **`opsora-prod`** (`mwbgkkthwwlcndccnbnf`, Singapore).
 
-**Setup:**
-
-1. Supabase Dashboard → **opsora-prod** → Settings → **Database** → copy the **Transaction pooler** password
-2. Edit `deploy/.env`:
+**No database password needed** — the API uses Supabase REST (PostgREST) with your **anon API key**:
 
 ```bash
-SUPABASE_PROJECT_REF=mwbgkkthwwlcndccnbnf
-SUPABASE_DB_PASSWORD=<paste-database-password>
-DB_SCHEMA=agent
-```
-
-3. Deploy:
-
-```bash
+cp deploy/.env.example deploy/.env
+# Set SUPABASE_ANON_KEY from Dashboard → Settings → API → anon public
+# (Cursor Supabase MCP can read this via get_publishable_keys)
 bash deploy/deploy-production.sh
 ```
 
-The API auto-builds the pooler URL (`aws-0-ap-southeast-1.pooler.supabase.com:6543`) for IPv4 networks. Schema `agent` is already migrated (tables: `users`, `agent_jobs`, `conversations`, etc.).
+Required env vars:
 
-When using Supabase, local Postgres is not started and alembic is skipped.
+```bash
+SUPABASE_PROJECT_REF=mwbgkkthwwlcndccnbnf
+SUPABASE_URL=https://mwbgkkthwwlcndccnbnf.supabase.co
+SUPABASE_ANON_KEY=<anon-key-from-dashboard>
+DB_SCHEMA=agent
+```
+
+Schema `agent` is pre-migrated. Local Postgres is not started when `SUPABASE_ANON_KEY` is set.
 
 ## Terraform Provisioning
 

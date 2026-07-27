@@ -55,14 +55,11 @@ fi
 DATABASE_URL="$(grep '^DATABASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)"
 SUPABASE_REF="$(grep '^SUPABASE_PROJECT_REF=' "$ENV_FILE" | cut -d= -f2- || true)"
 
-if echo "$DATABASE_URL" | grep -qi supabase || [[ -n "$SUPABASE_REF" ]]; then
-  echo "✅ Using Supabase Postgres (schema: ${DB_SCHEMA:-agent})"
-  if ! grep -q '^API_NETWORK_MODE=' "$ENV_FILE" 2>/dev/null; then
-    echo "API_NETWORK_MODE=host" >> "$ENV_FILE"
-    echo "API_INTERNAL_URL=http://host.docker.internal:8000" >> "$ENV_FILE"
+if echo "$DATABASE_URL" | grep -qi supabase || [[ -n "$SUPABASE_REF" ]] || grep -q '^SUPABASE_ANON_KEY=.' "$ENV_FILE" 2>/dev/null; then
+  echo "✅ Using Supabase (REST API or pooler, schema: agent)"
+  if grep -q '^SUPABASE_ANON_KEY=.' "$ENV_FILE" 2>/dev/null && ! grep -q '^API_NETWORK_MODE=' "$ENV_FILE" 2>/dev/null; then
+    echo "API_NETWORK_MODE=bridge" >> "$ENV_FILE"
   fi
-  export API_NETWORK_MODE=host
-  export API_INTERNAL_URL=http://host.docker.internal:8000
   $COMPOSE up -d --build redis api web
 else
   detect_db_url() {
