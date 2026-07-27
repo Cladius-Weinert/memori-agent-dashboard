@@ -85,6 +85,8 @@ async def build_catalog(user_id: int | None = None) -> dict[str, Any]:
 
     from app.agent.tools import TOOLS
 
+    from app.services.elastic_observability import status as elastic_status
+
     tools = [
         {"name": t["name"], "description": t["description"], "category": "agent", "requires_approval": t["name"] in ("run_command", "run_local_command", "provision_instance")}
         for t in TOOLS
@@ -102,6 +104,7 @@ async def build_catalog(user_id: int | None = None) -> dict[str, Any]:
         "resources": {
             "docker_containers": docker_n,
             "mcp_count": len(mcp_servers),
+            "elastic": elastic_status(),
         },
     }
 

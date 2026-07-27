@@ -21,7 +21,14 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "meta/llama-3.1-70b-instruct"
     LLM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000"
-    VAULT_ADDR: str = ""
+    ELASTIC_APM_SERVER_URL: str = ""
+    ELASTIC_APM_SECRET_TOKEN: str = ""
+    ELASTIC_APM_SERVICE_NAME: str = "memori-agent-api"
+    ELASTICSEARCH_URL: str = ""
+    ELASTICSEARCH_API_KEY: str = ""
+    ELASTICSEARCH_CLOUD_ID: str = ""
+    ELASTIC_ENVIRONMENT: str = "production"
+    KIBANA_URL: str = ""
 
     @field_validator("CORS_ORIGINS")
     @classmethod

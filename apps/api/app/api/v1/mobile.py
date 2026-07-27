@@ -18,6 +18,7 @@ from app.api.v1.catalog import build_catalog
 from app.api.v1.models import list_models
 from app.api.v1.settings import McpServerIn, ProviderIn
 from app.services.user_config import list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider, delete_mcp_server, delete_provider, PROVIDER_PRESETS, ensure_default_mcp_servers
+from app.services.elastic_observability import status as elastic_status
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password, verify_password
@@ -105,7 +106,9 @@ async def mobile_bootstrap(session: AsyncSession = Depends(get_db)) -> dict[str,
             "agent_loop": True,
             "mcp_custom": True,
             "providers_custom": True,
+            "elastic_observability": elastic_status()["configured"],
         },
+        "observability": elastic_status(),
         "agents": {
             role.value: {"model": model, "label": AGENT_LABELS[role]}
             for role, model in AGENT_MODELS.items()
