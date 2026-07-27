@@ -108,6 +108,50 @@ export const conversationsApi = {
     fetcher<Array<{ id: number; role: string; content: string }>>(`/api/v1/conversations/${id}/messages`),
 };
 
+// Git API
+export const gitApi = {
+  status: () => fetcher<{
+    branch?: string;
+    clean?: boolean;
+    staged?: Array<{ path: string; status: string }>;
+    unstaged?: Array<{ path: string; status: string }>;
+    untracked?: string[];
+  }>("/api/v1/git/status"),
+  diff: (path = "", staged = false) =>
+    fetcher<{ raw?: string; hunks?: Array<{ lines: unknown[] }>; has_changes?: boolean }>(
+      `/api/v1/git/diff?path=${encodeURIComponent(path)}&staged=${staged}`,
+    ),
+  branches: () => fetcher<{ current?: string; branches: string[] }>("/api/v1/git/branches"),
+  log: (limit = 15) => fetcher<{ commits: Array<{ hash: string; message: string }> }>(`/api/v1/git/log?limit=${limit}`),
+  add: (paths: string[]) =>
+    fetch(apiUrl("/api/v1/git/add"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ paths }),
+    }).then((r) => r.json()),
+  commit: (message: string) =>
+    fetch(apiUrl("/api/v1/git/commit"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ message }),
+    }).then((r) => {
+      if (!r.ok) return r.json().then((e) => { throw new Error(e.detail || "commit failed"); });
+      return r.json();
+    }),
+  checkout: (branch: string) =>
+    fetch(apiUrl("/api/v1/git/checkout"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ branch }),
+    }).then((r) => r.json()),
+  textDiff: (path: string, content: string) =>
+    fetch(apiUrl("/api/v1/git/text-diff"), {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ path, content }),
+    }).then((r) => r.json()) as Promise<{ has_changes: boolean; lines: Array<{ type: string; text: string }> }>,
+};
+
 // WebSocket helper — includes auth token as query param
 export function wsUrl(instanceId: number): string {
   const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";

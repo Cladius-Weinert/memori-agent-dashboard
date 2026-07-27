@@ -13,6 +13,7 @@ from app.core.db import SessionLocal
 from app.models.models import Instance
 from app.services.ssh_pool import ssh_pool
 from app.services import workspace_fs
+from app.services import workspace_git
 from app.agent.safety import check_command, is_destructive
 
 
@@ -161,27 +162,22 @@ async def read_file(path: str) -> dict[str, Any]:
 
 
 async def write_file(path: str, content: str) -> dict[str, Any]:
-    """Write content to a workspace file. Destructive overwrites require approval."""
-    requires_approval = True
+    """Write content to a workspace file. Overwrites require approval."""
     try:
         existing = await asyncio.to_thread(workspace_fs.read_file, path)
-        if existing.get("content") != content:
-            return {
-                "warning": "file write requires approval",
-                "requires_approval": requires_approval,
-                "path": path,
-                "preview": content[:500],
-            }
-    except FileNotFoundError:
-        requires_approval = False
-
-    if requires_approval:
+        old_content = existing.get("content", "")
+        if old_content == content:
+            return {"path": path, "unchanged": True}
         return {
-            "warning": "file write requires approval",
+            "warning": "file overwrite requires approval",
             "requires_approval": True,
             "path": path,
+            "content": content,
             "preview": content[:500],
+            "diff_lines": workspace_git.text_diff(old_content, content)[:80],
         }
+    except FileNotFoundError:
+        pass
 
     try:
         return await asyncio.to_thread(workspace_fs.write_file, path, content)
@@ -202,6 +198,22 @@ async def list_files(path: str = "") -> dict[str, Any]:
 async def search_code(query: str, path: str = "") -> dict[str, Any]:
     """Search workspace source files for a query string."""
     return await asyncio.to_thread(workspace_fs.search_code, query, path)
+
+
+async def git_status_tool() -> dict[str, Any]:
+    return await workspace_git.git_status()
+
+
+async def git_diff_tool(path: str = "", staged: bool = False) -> dict[str, Any]:
+    return await workspace_git.git_diff(path, staged=staged)
+
+
+async def git_commit_tool(message: str) -> dict[str, Any]:
+    return {
+        "warning": "git commit requires approval",
+        "requires_approval": True,
+        "message": message,
+    }
 
 
 # Tool registry exported for the planner
@@ -271,6 +283,24 @@ TOOLS = [
         "description": "Search workspace files for a text pattern.",
         "parameters": {"query": "str"},
         "fn": search_code,
+    },
+    {
+        "name": "git_status",
+        "description": "Show git branch and changed files in the workspace.",
+        "parameters": {},
+        "fn": git_status_tool,
+    },
+    {
+        "name": "git_diff",
+        "description": "Show git diff for a file or entire workspace.",
+        "parameters": {"path": "str"},
+        "fn": git_diff_tool,
+    },
+    {
+        "name": "git_commit",
+        "description": "Create a git commit with a message. Requires approval.",
+        "parameters": {"message": "str"},
+        "fn": git_commit_tool,
     },
 ]
 

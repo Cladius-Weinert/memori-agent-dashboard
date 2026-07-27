@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import { useIDEStore } from "@/app/stores/ideStore";
-import { filesApi } from "@/app/api/api";
+import { filesApi, gitApi } from "@/app/api/api";
+import { DiffViewer, type DiffLine } from "./DiffViewer";
 
 const Monaco = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
@@ -13,13 +15,42 @@ export function CodeEditor() {
   const markSaved = useIDEStore((s) => s.markSaved);
   const closeFile = useIDEStore((s) => s.closeFile);
   const setActivePath = useIDEStore((s) => s.setActivePath);
+  const setBottomTab = useIDEStore((s) => s.setBottomTab);
+
+  const [pendingSave, setPendingSave] = useState<{
+    path: string;
+    content: string;
+    lines: DiffLine[];
+  } | null>(null);
 
   const active = openFiles.find((f) => f.path === activePath);
 
   const save = async () => {
     if (!active) return;
-    await filesApi.write(active.path, active.content);
-    markSaved(active.path);
+    try {
+      const diff = await gitApi.textDiff(active.path, active.content);
+      if (diff.has_changes && diff.lines?.length) {
+        setPendingSave({
+          path: active.path,
+          content: active.content,
+          lines: diff.lines as DiffLine[],
+        });
+        setBottomTab("output");
+        return;
+      }
+      await filesApi.write(active.path, active.content);
+      markSaved(active.path);
+    } catch {
+      await filesApi.write(active.path, active.content);
+      markSaved(active.path);
+    }
+  };
+
+  const confirmSave = async () => {
+    if (!pendingSave) return;
+    await filesApi.write(pendingSave.path, pendingSave.content);
+    markSaved(pendingSave.path);
+    setPendingSave(null);
   };
 
   return (
@@ -51,7 +82,15 @@ export function CodeEditor() {
         )}
       </div>
       <div className="ide-editor-body">
-        {active ? (
+        {pendingSave && activePath === pendingSave.path ? (
+          <DiffViewer
+            path={pendingSave.path}
+            lines={pendingSave.lines}
+            title="Review changes before save"
+            onAccept={confirmSave}
+            onReject={() => setPendingSave(null)}
+          />
+        ) : active ? (
           <Monaco
             height="100%"
             theme="vs-dark"

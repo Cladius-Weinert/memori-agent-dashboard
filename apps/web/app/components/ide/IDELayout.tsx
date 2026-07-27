@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Files, MessageSquare, Server, Settings, Layers } from "lucide-react";
+import { Files, MessageSquare, Server, Settings, Layers, GitBranch } from "lucide-react";
 import { FileTree } from "./FileTree";
+import { GitPanel } from "./GitPanel";
 import { CodeEditor } from "./CodeEditor";
 import { AgentPanel } from "./AgentPanel";
 import { BottomPanel } from "./BottomPanel";
@@ -28,6 +29,14 @@ export function IDELayout() {
         </button>
         <button
           type="button"
+          className={sidebarTab === "git" ? "active" : ""}
+          onClick={() => setSidebarTab("git")}
+          title="Git"
+        >
+          <GitBranch size={18} />
+        </button>
+        <button
+          type="button"
           className={sidebarTab === "chats" ? "active" : ""}
           onClick={() => setSidebarTab("chats")}
           title="Chats"
@@ -48,9 +57,11 @@ export function IDELayout() {
 
       <aside className="ide-sidebar">
         <div className="ide-sidebar-title">
-          {sidebarTab === "files" ? "EXPLORER" : "CHAT"}
+          {sidebarTab === "files" ? "EXPLORER" : sidebarTab === "git" ? "SOURCE CONTROL" : "CHAT"}
         </div>
-        {sidebarTab === "files" ? <FileTree /> : (
+        {sidebarTab === "files" && <FileTree />}
+        {sidebarTab === "git" && <GitPanel />}
+        {sidebarTab === "chats" && (
           <div className="p-3 text-xs" style={{ color: "var(--t3)" }}>
             Gunakan panel agent di kanan untuk chat. Riwayat tersimpan otomatis.
           </div>

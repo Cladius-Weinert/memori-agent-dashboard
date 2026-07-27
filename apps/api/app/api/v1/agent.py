@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.security import decode_token
 from app.models.models import AgentAction, AgentJob, Conversation, ConversationMessage, User
 from app.schemas import AgentJobRead, AgentRunIn, ConversationMessageCreate
 from app.agent.planner import run_agent
@@ -105,7 +106,14 @@ async def get_agent_job(job_id: int, session: AsyncSession = Depends(get_db)) ->
 
 
 @router.get("/jobs/{job_id}/stream")
-async def stream_agent_job(job_id: int, session: AsyncSession = Depends(get_db)) -> StreamingResponse:
+async def stream_agent_job(
+    job_id: int,
+    token: str | None = Query(None),
+    session: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    if token and not decode_token(token):
+        raise HTTPException(status_code=401, detail="invalid stream token")
+
     job = await session.get(AgentJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="agent job not found")
@@ -183,12 +191,17 @@ async def approve_action(
     if action.tool == "write_file" and result.get("requires_approval"):
         from app.services import workspace_fs
         path = result.get("path") or action.params.get("path", "")
-        content = action.params.get("content", "")
+        content = result.get("content") or action.params.get("content", "")
         try:
             workspace_fs.write_file(path, content)
             action.result = {**result, "written": True, "requires_approval": False}
         except Exception as exc:
             action.result = {**result, "error": str(exc)}
+    elif action.tool == "git_commit" and result.get("requires_approval"):
+        from app.services import workspace_git
+        message = result.get("message") or action.params.get("message", "")
+        exec_result = await workspace_git.git_commit(message)
+        action.result = {**result, **exec_result, "requires_approval": False}
     elif action.tool == "run_command" and result.get("requires_approval"):
         from app.services.ssh_pool import ssh_pool
         instance_id = action.params.get("instance_id") or result.get("instance_id")

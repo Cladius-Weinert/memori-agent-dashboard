@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { DiffLine } from "@/app/components/ide/DiffViewer";
 
 export type OpenFile = {
   path: string;
@@ -9,7 +10,7 @@ export type OpenFile = {
 type IDEState = {
   openFiles: OpenFile[];
   activePath: string | null;
-  sidebarTab: "files" | "chats";
+  sidebarTab: "files" | "git" | "chats";
   bottomTab: "terminal" | "output";
   terminalInstanceId: number | null;
   setActivePath: (path: string | null) => void;
@@ -17,7 +18,7 @@ type IDEState = {
   updateContent: (path: string, content: string) => void;
   markSaved: (path: string) => void;
   closeFile: (path: string) => void;
-  setSidebarTab: (tab: "files" | "chats") => void;
+  setSidebarTab: (tab: "files" | "git" | "chats") => void;
   setBottomTab: (tab: "terminal" | "output") => void;
   setTerminalInstanceId: (id: number | null) => void;
 };

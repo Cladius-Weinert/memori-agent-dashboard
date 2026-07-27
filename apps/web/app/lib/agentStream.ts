@@ -1,4 +1,4 @@
-import { getHeaders, apiUrl } from "@/app/stores/authStore";
+import { getHeaders, apiUrl, useAuthStore } from "@/app/stores/authStore";
 
 export type AgentStreamEvent =
   | { type: "plan"; plan: Array<{ tool: string; args?: Record<string, unknown> }> }
@@ -11,7 +11,8 @@ export function streamAgentJob(
   onEvent: (event: AgentStreamEvent) => void,
   onError?: (err: Error) => void,
 ): () => void {
-  const url = apiUrl(`/api/v1/agent/jobs/${jobId}/stream`);
+  const token = useAuthStore.getState().token ?? "";
+  const url = apiUrl(`/api/v1/agent/jobs/${jobId}/stream?token=${encodeURIComponent(token)}`);
   const source = new EventSource(url);
 
   source.onmessage = (msg) => {

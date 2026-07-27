@@ -35,12 +35,12 @@ export function BottomPanel() {
             <XTermTerminal wsUrl={wsUrl(terminalInstanceId)} className="h-full min-h-[180px]" />
           ) : (
             <div className="ide-bottom-placeholder">
-              Pilih instance di Settings atau jalankan agent untuk membuka terminal SSH.
+              Buka instance di /instances untuk SSH terminal, atau jalankan agent command.
             </div>
           )
         ) : (
           <div className="ide-bottom-placeholder mono text-xs">
-            Agent output dan logs muncul di panel chat.
+            Git diff review muncul di editor saat Save. Agent output di panel kanan.
           </div>
         )}
       </div>

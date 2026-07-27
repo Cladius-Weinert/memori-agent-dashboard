@@ -1372,3 +1372,31 @@ h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 .ide-bottom-tabs button.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
 .ide-bottom-body { flex: 1; min-height: 0; padding: 4px; }
 .ide-bottom-placeholder { padding: 12px; font-size: 12px; color: var(--t3); }
+.ide-diff { display: flex; flex-direction: column; height: 100%; background: var(--s0); }
+.ide-diff-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--b2); font-size: 12px; }
+.ide-diff-actions { display: flex; gap: 8px; }
+.ide-diff-btn { font-size: 11px; padding: 4px 10px; border-radius: var(--r-sm); border: 1px solid var(--b2); cursor: pointer; }
+.ide-diff-btn.accept { background: var(--accent-dim); color: var(--accent); }
+.ide-diff-btn.reject { background: var(--s2); color: var(--t2); }
+.ide-diff-body { flex: 1; overflow: auto; margin: 0; padding: 8px; font-family: var(--mono); font-size: 11px; line-height: 1.45; }
+.ide-diff-line { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-all; }
+.ide-diff-line--add { background: rgba(46, 160, 67, 0.15); color: #7ee787; }
+.ide-diff-line--del { background: rgba(248, 81, 73, 0.15); color: #ffa198; }
+.ide-diff-line--ctx { color: var(--t3); }
+.ide-diff-line--hunk, .ide-diff-line--meta { color: var(--accent); }
+.ide-diff-prefix { width: 12px; flex-shrink: 0; opacity: 0.7; }
+.ide-diff-empty { padding: 16px; color: var(--t3); font-size: 12px; }
+.ide-git { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.ide-git-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--b2); font-size: 12px; }
+.ide-git-refresh { margin-left: auto; background: none; border: none; color: var(--t3); cursor: pointer; }
+.ide-git-section { flex: 1; overflow: auto; padding: 6px 0; }
+.ide-git-section-title { font-family: var(--mono); font-size: 10px; color: var(--t3); padding: 4px 10px; letter-spacing: 0.5px; }
+.ide-git-empty { padding: 8px 10px; font-size: 11px; color: var(--t3); }
+.ide-git-file { display: flex; align-items: center; gap: 6px; padding: 3px 8px; font-size: 11px; }
+.ide-git-file:hover { background: var(--s3); }
+.ide-git-status { font-family: var(--mono); color: var(--accent); width: 14px; }
+.ide-git-file-name { flex: 1; text-align: left; background: none; border: none; color: var(--t2); cursor: pointer; font-size: 11px; }
+.ide-git-commit { padding: 8px; border-top: 1px solid var(--b2); display: flex; flex-direction: column; gap: 6px; }
+.ide-git-commit input { font-size: 11px; padding: 6px 8px; background: var(--s0); border: 1px solid var(--b2); border-radius: var(--r-sm); color: var(--t1); }
+.ide-git-commit-actions { display: flex; gap: 6px; }
+.ide-git-commit-actions button { flex: 1; font-size: 11px; padding: 5px; border: 1px solid var(--b2); background: var(--s2); border-radius: var(--r-sm); cursor: pointer; color: var(--t2); display: flex; align-items: center; justify-content: center; gap: 4px; }

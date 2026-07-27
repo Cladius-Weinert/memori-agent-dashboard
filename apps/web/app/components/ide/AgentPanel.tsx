@@ -12,6 +12,7 @@ import {
   streamAgentJob,
   type AgentStreamEvent,
 } from "@/app/lib/agentStream";
+import { DiffViewer, type DiffLine } from "./DiffViewer";
 
 type PlanStep = { tool: string; args?: Record<string, unknown> };
 type StepView = {
@@ -177,7 +178,11 @@ export function AgentPanel() {
                 {m.steps?.map((s, i) => (
                   <div key={i} className="ide-tool-block">
                     <Terminal size={12} /> <strong>{s.tool}</strong>
-                    <pre>{JSON.stringify(s.result, null, 2).slice(0, 400)}</pre>
+                    {Array.isArray(s.result?.diff_lines) && (s.result.diff_lines as DiffLine[]).length > 0 ? (
+                      <DiffViewer lines={s.result.diff_lines as DiffLine[]} title={`${s.tool} preview`} />
+                    ) : (
+                      <pre>{JSON.stringify(s.result, null, 2).slice(0, 400)}</pre>
+                    )}
                     {s.requires_approval && s.action_id && s.status === "pending" && (
                       <div className="ide-approval">
                         <button type="button" onClick={() => onApprove(m.id, s.action_id!)}>
