@@ -145,6 +145,42 @@ def get_provider_client(user_id: int, provider_id: str | None = None) -> dict[st
 
 # ── MCP Servers ────────────────────────────────────────────────
 
+def ensure_default_mcp_servers(user_id: int) -> None:
+    """Seed builtin terminal + github MCP for every mobile user."""
+    path = _user_dir(user_id) / "mcp_servers.json"
+    rows = _read_json(path)
+    existing = {r.get("id") for r in rows}
+    defaults = [
+        {
+            "id": "builtin-terminal",
+            "name": "terminal",
+            "transport": "builtin",
+            "url": "builtin://terminal",
+            "description": "Shell di server API (run_local_command)",
+            "enabled": True,
+            "builtin": True,
+            "custom": False,
+        },
+        {
+            "id": "builtin-github",
+            "name": "github",
+            "transport": "builtin",
+            "url": "builtin://github",
+            "description": "GitHub CLI & REST API",
+            "enabled": True,
+            "builtin": True,
+            "custom": False,
+        },
+    ]
+    changed = False
+    for d in defaults:
+        if d["id"] not in existing:
+            rows.append(d)
+            changed = True
+    if changed:
+        _write_json(path, rows)
+
+
 def list_mcp_servers(user_id: int) -> list[dict[str, Any]]:
     return _read_json(_user_dir(user_id) / "mcp_servers.json")
 

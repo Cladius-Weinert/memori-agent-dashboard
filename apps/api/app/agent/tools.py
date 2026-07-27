@@ -262,8 +262,88 @@ async def run_local_command(command: str, cwd: str | None = None) -> dict[str, A
         return {"error": f"command timed out after {_LOCAL_CMD_TIMEOUT}s", "command": command}
 
 
+async def github_run(command: str) -> dict[str, Any]:
+    """Run a GitHub CLI (gh) command on the API host."""
+    if not command.strip().startswith("gh "):
+        command = f"gh {command.strip()}"
+    allowed, reason = check_command(command)
+    if not allowed:
+        return {"error": f"command blocked: {reason}", "command": command}
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    env = os.environ.copy()
+    if token:
+        env["GH_TOKEN"] = token
+        env["GITHUB_TOKEN"] = token
+
+    def _run() -> dict[str, Any]:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd="/agent",
+            capture_output=True,
+            text=True,
+            timeout=_LOCAL_CMD_TIMEOUT,
+            env=env,
+        )
+        return {
+            "command": command,
+            "exit_code": proc.returncode,
+            "stdout": proc.stdout[-8000:],
+            "stderr": proc.stderr[-4000:],
+        }
+
+    try:
+        return await asyncio.to_thread(_run)
+    except subprocess.TimeoutExpired:
+        return {"error": f"github command timed out after {_LOCAL_CMD_TIMEOUT}s", "command": command}
+    except FileNotFoundError:
+        return {"error": "gh CLI not installed", "command": command}
+
+
+async def github_api(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call GitHub REST API (api.github.com). Path like /repos/owner/repo."""
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    if not token:
+        return {"error": "GITHUB_TOKEN not configured"}
+    if not path.startswith("/"):
+        path = f"/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.request(
+                method.upper(),
+                f"https://api.github.com{path}",
+                headers=headers,
+                json=body if body else None,
+            )
+            text = resp.text[:8000]
+            return {"status": resp.status_code, "path": path, "body": text}
+    except httpx.HTTPError as exc:
+        return {"error": str(exc), "path": path}
+
+
 async def mcp_invoke(server: str, tool: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call a tool on a user-configured custom MCP HTTP endpoint."""
+    """Call builtin or user-configured MCP server."""
+    args = arguments or {}
+    if server in ("terminal", "builtin-terminal"):
+        cmd = args.get("command", tool if tool not in ("run", "exec") else "")
+        if not cmd:
+            return {"error": "command required", "server": "terminal"}
+        return await run_local_command(cmd, args.get("cwd"))
+
+    if server in ("github", "builtin-github"):
+        if args.get("action") == "api" or tool == "api":
+            return await github_api(
+                args.get("method", "GET"),
+                args.get("path", ""),
+                args.get("body"),
+            )
+        return await github_run(args.get("command", tool if tool.startswith("gh") else f"gh {tool}"))
+
     uid = _user_id_ctx.get()
     if uid is None:
         return {"error": "no user context for MCP"}
@@ -273,13 +353,15 @@ async def mcp_invoke(server: str, tool: str, arguments: dict[str, Any] | None = 
     target = next((s for s in servers if s.get("name") == server or s.get("id") == server), None)
     if not target:
         return {"error": f"mcp server not found: {server}", "available": [s.get("name") for s in servers]}
+    if target.get("builtin") or target.get("transport") == "builtin":
+        return {"error": "builtin server — use mcp_invoke with server name terminal or github"}
 
     token = get_mcp_auth(uid, target["id"])
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    payload = {"tool": tool, "arguments": arguments or {}}
+    payload = {"tool": tool, "arguments": args}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(target["url"], json=payload, headers=headers)
@@ -380,8 +462,20 @@ TOOLS = [
         "fn": run_local_command,
     },
     {
+        "name": "github_run",
+        "description": "Run GitHub CLI (gh) — repos, PRs, issues, actions. Requires GITHUB_TOKEN.",
+        "parameters": {"command": "str"},
+        "fn": github_run,
+    },
+    {
+        "name": "github_api",
+        "description": "GitHub REST API call. Path like /repos/owner/repo or /user/repos.",
+        "parameters": {"method": "str", "path": "str", "body": "dict | None"},
+        "fn": github_api,
+    },
+    {
         "name": "mcp_invoke",
-        "description": "Invoke a tool on a user-configured custom MCP server.",
+        "description": "Invoke MCP server: terminal (shell), github (gh/api), or custom HTTP MCP.",
         "parameters": {"server": "str", "tool": "str", "arguments": "dict"},
         "fn": mcp_invoke,
     },

@@ -156,8 +156,8 @@ ORCHESTRATOR_SYSTEM = """You are the Opsora ORCHESTRATOR agent (NVIDIA Nemotron 
 Decompose the user goal into a JSON plan the team can execute.
 Output ONLY valid JSON:
 {"goal_summary":"...","steps":["step1","step2"],"agents_needed":["visual","executor"],"done_criteria":"...","requires_tools":true}
-Set requires_tools=true when the goal needs webfetch, files, terminal, or cloud ops.
-Loop until done_criteria met. Be specific about cloud ops, MCP tools, terminal commands."""
+Set requires_tools=true when the goal needs webfetch, files, terminal, github, or cloud ops.
+Loop until done_criteria met. Be specific: use run_local_command for shell, github_run for repos/PRs, mcp_invoke for MCP servers."""
 
 VISUAL_SYSTEM = """You are the Opsora VISUAL agent (Llama 90B Vision).
 When asked about UI, layout, or design — output structured design guidance:
@@ -167,8 +167,8 @@ Be concrete: spacing, font sizes, panel structure."""
 
 EXECUTOR_SYSTEM = """You are the Opsora EXECUTOR agent (Llama 70B).
 Synthesize the orchestrator plan and specialist outputs into a clear, actionable reply for the user.
-Execute cloud ops tasks. Reference tools: run_command, webfetch, list_instances, MCP.
-If plan incomplete, say what's next. Be concise, use markdown lists when helpful."""
+Execute tasks using tools: run_local_command (terminal), github_run/github_api, mcp_invoke, webfetch.
+If plan incomplete, say what's next. Be concise."""
 
 DEEP_SYSTEM = """You are the Opsora DEEP reasoning agent (DeepSeek).
 Analyze complex bugs, architecture, security. Step-by-step reasoning.

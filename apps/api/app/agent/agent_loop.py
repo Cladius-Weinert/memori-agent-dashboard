@@ -84,7 +84,8 @@ def _goal_needs_tools(goal: str, mode: str, plan: list[str] | None = None) -> bo
     keywords = (
         "fetch", "web", "http", "url", "file", "create", "write", "build",
         "run ", "terminal", "command", "deploy", "status", "health", "search",
-        "debug", "fix", "code", "server", "instance", "log",
+        "debug", "fix", "code", "server", "instance", "log", "github", "gh ",
+        "repo", "pull request", "pr ", "commit", "git ",
     )
     if mode in ("plan", "research"):
         return True

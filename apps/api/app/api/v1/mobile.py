@@ -17,7 +17,7 @@ from app.api.v1.auth import get_current_user
 from app.api.v1.catalog import build_catalog
 from app.api.v1.models import list_models
 from app.api.v1.settings import McpServerIn, ProviderIn
-from app.services.user_config import list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider, delete_mcp_server, delete_provider, PROVIDER_PRESETS
+from app.services.user_config import list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider, delete_mcp_server, delete_provider, PROVIDER_PRESETS, ensure_default_mcp_servers
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.security import create_access_token, hash_password, verify_password
@@ -53,6 +53,7 @@ def _llm_client() -> AsyncOpenAI:
 async def _ensure_mobile_user(session: AsyncSession) -> User:
     user = await session.scalar(select(User).where(User.email == MOBILE_EMAIL))
     if user:
+        ensure_default_mcp_servers(user.id)
         return user
     user = User(
         email=MOBILE_EMAIL,
@@ -64,6 +65,7 @@ async def _ensure_mobile_user(session: AsyncSession) -> User:
     session.add(user)
     await session.commit()
     await session.refresh(user)
+    ensure_default_mcp_servers(user.id)
     return user
 
 
@@ -116,6 +118,12 @@ class MultiAgentIn(BaseModel):
     goal: str
     mode: str = "chat"
     history: list[dict[str, str]] = []
+
+
+@router.get("/catalog")
+async def mobile_catalog(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """Authenticated catalog with user MCP servers and tools."""
+    return await build_catalog(current_user.id)
 
 
 @router.post("/multi-agent/run")
@@ -222,7 +230,8 @@ async def mobile_delete_provider(
 
 @router.get("/settings/mcp")
 async def mobile_list_mcp(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"servers": list_mcp_servers(current_user.id)}
+    servers = list_mcp_servers(current_user.id)
+    return {"servers": [s for s in servers if not s.get("builtin") and s.get("transport") != "builtin"]}
 
 
 @router.post("/settings/mcp")
@@ -240,3 +249,53 @@ async def mobile_delete_mcp(
 ) -> dict[str, str]:
     delete_mcp_server(current_user.id, server_id)
     return {"status": "deleted"}
+
+
+@router.post("/settings/mcp/{server_id}/test")
+async def mobile_test_mcp(
+    server_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Test builtin (terminal/github) or custom MCP server."""
+    from app.agent.tools import run_local_command, github_run
+    from app.services.user_config import get_mcp_auth, list_mcp_servers
+
+    if server_id in ("builtin-terminal", "terminal"):
+        result = await run_local_command("echo opsora-terminal-ok")
+        return {"ok": result.get("exit_code") == 0, "server": "terminal", "result": result}
+
+    if server_id in ("builtin-github", "github"):
+        token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+        if not token:
+            return {"ok": False, "server": "github", "error": "GITHUB_TOKEN not set on API host"}
+        result = await github_run("auth status")
+        ok = result.get("exit_code") == 0 or bool(token)
+        return {
+            "ok": ok,
+            "server": "github",
+            "result": result,
+        }
+
+    servers = list_mcp_servers(current_user.id)
+    srv = next((s for s in servers if s.get("id") == server_id), None)
+    if not srv:
+        return {"ok": False, "error": "server not found"}
+
+    if srv.get("builtin") or srv.get("transport") == "builtin":
+        name = srv.get("name", "")
+        if name == "terminal":
+            return await mobile_test_mcp("builtin-terminal", current_user)
+        if name == "github":
+            return await mobile_test_mcp("builtin-github", current_user)
+
+    token = get_mcp_auth(current_user.id, server_id)
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(srv["url"], headers=headers)
+            return {"ok": resp.status_code < 500, "status": resp.status_code, "server": srv["name"]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "server": srv.get("name")}
