@@ -15,14 +15,21 @@ from app.core.config import settings
 CONFIG_ROOT = Path(os.getenv("OPSORA_CONFIG_DIR", "/home/ubuntu/.opsora/users"))
 
 PROVIDER_PRESETS: dict[str, dict[str, str]] = {
-    "nvidia": {"label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1"},
-    "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1"},
-    "anthropic": {"label": "Anthropic", "base_url": "https://api.anthropic.com/v1"},
-    "dashscope": {"label": "Alibaba DashScope", "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
-    "tokenhub": {"label": "Tencent TokenHub", "base_url": "https://tokenhub.tencentmaas.com/v1"},
-    "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1"},
-    "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1"},
-    "custom": {"label": "Custom", "base_url": ""},
+    "nvidia": {"label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1", "default_model": "meta/llama-3.1-70b-instruct"},
+    "openai": {"label": "OpenAI", "base_url": "https://api.openai.com/v1", "default_model": "gpt-4o"},
+    "anthropic": {"label": "Anthropic", "base_url": "https://api.anthropic.com/v1", "default_model": "claude-sonnet-4-20250514"},
+    "groq": {"label": "Groq", "base_url": "https://api.groq.com/openai/v1", "default_model": "llama-3.3-70b-versatile"},
+    "deepseek": {"label": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-chat"},
+    "google": {"label": "Google Gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "default_model": "gemini-2.0-flash"},
+    "xai": {"label": "xAI Grok", "base_url": "https://api.x.ai/v1", "default_model": "grok-3"},
+    "mistral": {"label": "Mistral", "base_url": "https://api.mistral.ai/v1", "default_model": "mistral-large-latest"},
+    "openrouter": {"label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "default_model": "openrouter/auto"},
+    "together": {"label": "Together AI", "base_url": "https://api.together.xyz/v1", "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+    "fireworks": {"label": "Fireworks", "base_url": "https://api.fireworks.ai/inference/v1", "default_model": "accounts/fireworks/models/llama-v3p3-70b-instruct"},
+    "dashscope": {"label": "Alibaba DashScope", "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "default_model": "qwen-plus"},
+    "tokenhub": {"label": "Tencent TokenHub", "base_url": "https://tokenhub.tencentmaas.com/v1", "default_model": "deepseek-v3"},
+    "ollama": {"label": "Ollama (local)", "base_url": "http://localhost:11434/v1", "default_model": "llama3.1"},
+    "custom": {"label": "Custom OpenAI-compatible", "base_url": "", "default_model": ""},
 }
 
 
@@ -245,6 +252,25 @@ ORCHESTRATOR_DEFAULTS: dict[str, Any] = {
     },
 }
 
+# Reasoning/orch models are poor JSON tool executors — never use as loop_model.
+_LOOP_BLOCKLIST = (
+    "nemotron-3-nano-omni",
+    "deepseek-r1",
+    "deepseek-reasoner",
+    "o3-",
+    "o1-",
+)
+
+
+def _sanitize_loop_model(model: str | None) -> str:
+    default = ORCHESTRATOR_DEFAULTS["loop_model"]
+    if not model or not isinstance(model, str):
+        return default
+    low = model.lower()
+    if any(b in low for b in _LOOP_BLOCKLIST):
+        return default
+    return model
+
 
 def get_orchestrator_settings(user_id: int) -> dict[str, Any]:
     path = _user_dir(user_id) / "orchestrator.json"
@@ -256,6 +282,7 @@ def get_orchestrator_settings(user_id: int) -> dict[str, Any]:
         merged.update({k: v for k, v in data.items() if v is not None})
         if isinstance(data.get("agent_models"), dict):
             merged["agent_models"] = {**ORCHESTRATOR_DEFAULTS["agent_models"], **data["agent_models"]}
+        merged["loop_model"] = _sanitize_loop_model(merged.get("loop_model"))
         return merged
     except (json.JSONDecodeError, OSError):
         return dict(ORCHESTRATOR_DEFAULTS)
@@ -266,6 +293,8 @@ def save_orchestrator_settings(user_id: int, data: dict[str, Any]) -> dict[str, 
     for key in ("host", "port", "engine", "loop_model", "max_iterations"):
         if key in data and data[key] is not None:
             current[key] = data[key]
+    if "loop_model" in current:
+        current["loop_model"] = _sanitize_loop_model(current.get("loop_model"))
     if isinstance(data.get("agent_models"), dict):
         current["agent_models"] = {**current.get("agent_models", {}), **data["agent_models"]}
     path = _user_dir(user_id) / "orchestrator.json"

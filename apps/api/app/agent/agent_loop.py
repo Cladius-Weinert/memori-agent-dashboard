@@ -16,24 +16,24 @@ EXECUTOR_MODEL = "meta/llama-3.1-70b-instruct"
 ORCHESTRATOR_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 FALLBACK_MODEL = "meta/llama-3.1-70b-instruct"
 
-TOOL_SYSTEM = """You are the Opsora EXECUTOR agent in a tool loop (like Cursor).
-Given a goal and prior tool results, decide the NEXT action.
+TOOL_SYSTEM = """You are Opsora — a global AI agent (Cursor-style tool loop).
+You help with ANY task: coding, research, writing, planning, infra, GitHub, web, files, todos — not only console/server work.
 
 Available tools:
 """ + json.dumps([{"name": t["name"], "description": t["description"], "parameters": t["parameters"]} for t in TOOLS], indent=2) + """
 
 Output ONLY valid JSON (one object):
-{"action":"tool","tool":"<name>","args":{...},"reason":"why this step"}
+{"action":"tool","tool":"<name>","args":{...},"reason":"short why"}
 OR when goal is satisfied:
-{"action":"done","summary":"what was accomplished","reason":"why done"}
+{"action":"done","summary":"clear user-facing answer of what was done / the result","reason":"why done"}
 OR if stuck:
 {"action":"fail","reason":"what blocked progress"}
 
 Rules:
-- Prefer webfetch for docs/URLs, read_file/write_file for code, run_local_command for terminal.
-- Use list_instances/run_command for remote servers.
-- Use todo_create with titles=[] to break multi-step goals into a checklist; todo_update to mark done.
-- One tool per step. Be specific in args."""
+- Prefer webfetch for docs/URLs; read_file/write_file for code; run_local_command for shell; github_* for GitHub.
+- Use todo_create with titles=[] for multi-step checklists.
+- For pure Q&A with no side effects, prefer action=done with a useful summary (do not force tools).
+- One tool per step. Be specific in args. Keep reason short."""
 
 REFLECT_SYSTEM = """You judge whether an Opsora agent goal is complete.
 Reply ONLY JSON: {"complete": true|false, "reason": "..."}"""
@@ -55,6 +55,13 @@ def _strip_json(text: str) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        # try extract first {...}
+        m = re.search(r"\{[\s\S]*\}", text)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                pass
         return {"action": "fail", "reason": f"invalid JSON: {text[:200]}"}
 
 
@@ -88,6 +95,8 @@ def _goal_needs_tools(goal: str, mode: str, plan: list[str] | None = None) -> bo
         "debug", "fix", "code", "server", "instance", "log", "github", "gh ",
         "repo", "pull request", "pr ", "commit", "git ",
         "todo", "todos", "checklist", "tugas", "daftar",
+        "install", "update", "hapus", "delete", "cek ", "check ", "list ",
+        "baca", "read ", "unduh", "download", "upload", "analisis file",
     )
     if mode in ("plan", "research"):
         return True
@@ -192,8 +201,9 @@ async def run_tool_loop(
             "type": "activity",
             "kind": "tool",
             "status": "running",
-            "text": f"› {tool_name}",
+            "text": tool_name,
             "detail": decision.get("reason", ""),
+            "key": f"tool-{iteration}-{tool_name}",
         }
 
         result = await call_tool(tool_name, **args)
@@ -228,8 +238,10 @@ async def run_tool_loop(
             "type": "activity",
             "kind": "tool",
             "status": "done",
-            "text": f"✓ {tool_name}",
+            "text": tool_name,
             "detail": _activity_detail(result),
+            "key": f"tool-{iteration}-{tool_name}",
+            "output": _activity_detail(result),
         }
         for line in _repl_lines(result):
             yield {"type": "activity", "kind": "repl", "status": "done", "text": line}
@@ -270,8 +282,9 @@ async def run_tool_loop(
     }
 
 
-CHAT_SYSTEM = """You are Opsora, an expert cloud operations AI assistant.
-Be concise, actionable, and helpful. Use markdown sparingly."""
+CHAT_SYSTEM = """You are Opsora — a global AI assistant and agent.
+Help with anything: coding, writing, research, planning, cloud/infra, GitHub, product questions, and everyday tasks.
+Be concise, actionable, and clear. Use markdown sparingly. Prefer Indonesian if the user writes in Indonesian."""
 
 
 async def run_single_model_agent(
@@ -284,7 +297,20 @@ async def run_single_model_agent(
     force_loop: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Single-model agent: tool loop when needed, otherwise direct chat."""
+    # Never run the tool loop on reasoning-only models
+    from app.services.user_config import _sanitize_loop_model
+    model = _sanitize_loop_model(model)
+
     needs_tools = force_loop or _goal_needs_tools(goal, mode)
+
+    yield {
+        "type": "activity",
+        "kind": "thinking",
+        "status": "running",
+        "text": "Thinking",
+        "detail": model.split("/")[-1],
+        "key": "thinking",
+    }
 
     if needs_tools:
         reply_parts: list[str] = []
@@ -293,9 +319,18 @@ async def run_single_model_agent(
             mode=mode,
             max_iterations=max_iterations,
             executor_model=model,
-            reflect_model=model,
+            reflect_model=FALLBACK_MODEL,
             force=force_loop,
         ):
+            if ev.get("type") == "loop_start":
+                yield {
+                    "type": "activity",
+                    "kind": "thinking",
+                    "status": "done",
+                    "text": "Planning",
+                    "detail": f"{ev.get('max_iterations', 12)} steps max",
+                    "key": "thinking",
+                }
             yield ev
             if ev.get("type") == "loop_done":
                 reply_parts.append(str(ev.get("summary", "")))
@@ -304,13 +339,16 @@ async def run_single_model_agent(
         return
 
     client = _client()
-    messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM}]
+    mode_extra = {
+        "plan": " Focus on a clear numbered plan.",
+        "research": " Research from multiple angles and summarize findings.",
+    }.get(mode, "")
+    messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM + mode_extra}]
     for h in (history or [])[-10:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": goal})
 
-    yield {"type": "activity", "kind": "agent", "status": "running", "text": "Thinking", "detail": model.split("/")[-1]}
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -320,8 +358,27 @@ async def run_single_model_agent(
         )
         reply = resp.choices[0].message.content or ""
     except Exception as exc:
-        reply = f"Error: {exc}"
-    yield {"type": "activity", "kind": "agent", "status": "done", "text": "Reply", "detail": model.split("/")[-1]}
+        # fallback once
+        try:
+            resp = await client.chat.completions.create(
+                model=FALLBACK_MODEL,
+                messages=messages,
+                temperature=0.4,
+                max_tokens=2048,
+            )
+            reply = resp.choices[0].message.content or ""
+            model = FALLBACK_MODEL
+        except Exception:
+            reply = f"Error: {exc}"
+
+    yield {
+        "type": "activity",
+        "kind": "thinking",
+        "status": "done",
+        "text": "Thinking",
+        "detail": model.split("/")[-1],
+        "key": "thinking",
+    }
     yield {"type": "done", "reply": reply, "plan": [], "loops": 0, "model": model}
 
 

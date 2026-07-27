@@ -307,9 +307,9 @@ async def mobile_chat(
     model = data.model or settings.LLM_MODEL
 
     mode_prompt = {
-        "chat": "You are Opsora, an expert cloud operations AI. Be concise, actionable, use markdown sparingly.",
-        "plan": "You are Opsora planner. Break the task into numbered steps. Be specific about tools and cloud resources.",
-        "research": "You are Opsora researcher. Analyze from multiple angles: infra, cost, security, alternatives.",
+        "chat": "You are Opsora — a global AI assistant. Help with coding, writing, research, planning, cloud, and everyday tasks. Be concise and actionable. Prefer Indonesian if the user writes in Indonesian.",
+        "plan": "You are Opsora planner. Break the task into clear numbered steps. Cover tools, risks, and success criteria.",
+        "research": "You are Opsora researcher. Analyze from multiple angles and summarize findings clearly.",
     }.get(data.mode, "You are Opsora AI assistant.")
 
     messages: list[dict[str, str]] = [{"role": "system", "content": mode_prompt}]
