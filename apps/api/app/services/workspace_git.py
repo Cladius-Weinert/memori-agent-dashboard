@@ -11,6 +11,20 @@ from app.services.workspace_fs import workspace_root
 
 GIT_TIMEOUT = 45
 DIFF_MAX_LINES = 500
+_configured_safe_dirs: set[str] = set()
+
+
+def _ensure_safe_directory(root: Path) -> None:
+    key = str(root.resolve())
+    if key in _configured_safe_dirs:
+        return
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", key],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    _configured_safe_dirs.add(key)
 
 
 def _run_git(args: list[str], *, cwd: Path | None = None) -> dict[str, Any]:
@@ -18,6 +32,7 @@ def _run_git(args: list[str], *, cwd: Path | None = None) -> dict[str, Any]:
     if not (root / ".git").exists():
         return {"ok": False, "error": "not a git repository", "code": 128}
 
+    _ensure_safe_directory(root)
     try:
         proc = subprocess.run(
             ["git", *args],
