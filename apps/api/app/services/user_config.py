@@ -226,3 +226,48 @@ def get_mcp_auth(user_id: int, server_id: str) -> str:
         if s.get("id") == server_id and s.get("auth_token_enc"):
             return _decrypt(s["auth_token_enc"])
     return ""
+
+
+# ── Orchestrator / agent engine settings ───────────────────────
+
+ORCHESTRATOR_DEFAULTS: dict[str, Any] = {
+    "host": os.getenv("ORCHESTRATOR_HOST", "54.81.31.132"),
+    "port": int(os.getenv("ORCHESTRATOR_PORT", "8787")),
+    "engine": "agent",  # chat | agent | multi
+    "loop_model": os.getenv("LLM_MODEL", "meta/llama-3.1-70b-instruct"),
+    "max_iterations": 12,
+    "agent_models": {
+        "orchestrator": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        "visual": "meta/llama-3.2-90b-vision-instruct",
+        "executor": "meta/llama-3.1-70b-instruct",
+        "deep": "deepseek-ai/deepseek-v4-pro",
+        "explore": "meta/llama-3.1-70b-instruct",
+    },
+}
+
+
+def get_orchestrator_settings(user_id: int) -> dict[str, Any]:
+    path = _user_dir(user_id) / "orchestrator.json"
+    if not path.is_file():
+        return dict(ORCHESTRATOR_DEFAULTS)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        merged = dict(ORCHESTRATOR_DEFAULTS)
+        merged.update({k: v for k, v in data.items() if v is not None})
+        if isinstance(data.get("agent_models"), dict):
+            merged["agent_models"] = {**ORCHESTRATOR_DEFAULTS["agent_models"], **data["agent_models"]}
+        return merged
+    except (json.JSONDecodeError, OSError):
+        return dict(ORCHESTRATOR_DEFAULTS)
+
+
+def save_orchestrator_settings(user_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    current = get_orchestrator_settings(user_id)
+    for key in ("host", "port", "engine", "loop_model", "max_iterations"):
+        if key in data and data[key] is not None:
+            current[key] = data[key]
+    if isinstance(data.get("agent_models"), dict):
+        current["agent_models"] = {**current.get("agent_models", {}), **data["agent_models"]}
+    path = _user_dir(user_id) / "orchestrator.json"
+    path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    return current

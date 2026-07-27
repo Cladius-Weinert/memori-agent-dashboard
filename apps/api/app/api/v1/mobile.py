@@ -17,7 +17,12 @@ from app.api.v1.auth import get_current_user
 from app.api.v1.catalog import build_catalog
 from app.api.v1.models import list_models
 from app.api.v1.settings import McpServerIn, ProviderIn
-from app.services.user_config import list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider, delete_mcp_server, delete_provider, PROVIDER_PRESETS, ensure_default_mcp_servers
+from app.services.user_config import (
+    list_mcp_servers, list_providers, upsert_mcp_server, upsert_provider,
+    delete_mcp_server, delete_provider, PROVIDER_PRESETS, ensure_default_mcp_servers,
+    get_orchestrator_settings, save_orchestrator_settings,
+)
+from app.agent.agent_loop import run_single_model_agent
 from app.services.elastic_observability import status as elastic_status
 from app.core.config import settings
 from app.core.db import get_db
@@ -38,6 +43,12 @@ PERMANENT_GATEWAY = os.getenv(
 class MobileLoginIn(BaseModel):
     email: str
     password: str
+
+
+class MobileRegisterIn(BaseModel):
+    email: str
+    password: str
+    full_name: str | None = None
 
 
 class ChatIn(BaseModel):
@@ -85,6 +96,7 @@ async def _mobile_payload(session: AsyncSession, user: User) -> dict[str, Any]:
     cat = await build_catalog(user.id)
     user_providers = list_providers(user.id)
     nvidia_ok = bool(settings.LLM_API_KEY or os.getenv("NVIDIA_API_KEY"))
+    orch = get_orchestrator_settings(user.id)
 
     return {
         "access_token": token,
@@ -103,8 +115,12 @@ async def _mobile_payload(session: AsyncSession, user: User) -> dict[str, Any]:
         "user_providers": user_providers,
         "catalog": cat,
         "orchestrator": {
-            "host": os.getenv("ORCHESTRATOR_HOST", "54.81.31.132"),
-            "port": int(os.getenv("ORCHESTRATOR_PORT", "8787")),
+            "host": orch.get("host", "54.81.31.132"),
+            "port": orch.get("port", 8787),
+            "engine": orch.get("engine", "agent"),
+            "loop_model": orch.get("loop_model", settings.LLM_MODEL),
+            "max_iterations": orch.get("max_iterations", 12),
+            "agent_models": orch.get("agent_models", {}),
         },
         "features": {
             "chat": True,
@@ -143,6 +159,26 @@ async def mobile_login(data: MobileLoginIn, session: AsyncSession = Depends(get_
     return await _mobile_payload(session, user)
 
 
+@router.post("/register")
+async def mobile_register(data: MobileRegisterIn, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    """Register new mobile user — returns bootstrap payload on success."""
+    existing = await session.scalar(select(User).where(User.email == data.email))
+    if existing:
+        raise HTTPException(status_code=400, detail="Email sudah terdaftar")
+    user = User(
+        email=data.email,
+        full_name=data.full_name or data.email.split("@")[0],
+        hashed_password=hash_password(data.password),
+        role="user",
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    ensure_default_mcp_servers(user.id)
+    return await _mobile_payload(session, user)
+
+
 @router.post("/refresh")
 async def mobile_refresh(
     current_user: User = Depends(get_current_user),
@@ -157,6 +193,25 @@ class MultiAgentIn(BaseModel):
     goal: str
     mode: str = "chat"
     history: list[dict[str, str]] = []
+    model: str | None = None
+
+
+class AgentLoopIn(BaseModel):
+    goal: str
+    mode: str = "chat"
+    history: list[dict[str, str]] = []
+    model: str | None = None
+    max_iterations: int = 12
+    force_loop: bool = False
+
+
+class OrchestratorSettingsIn(BaseModel):
+    host: str | None = None
+    port: int | None = None
+    engine: str | None = None  # chat | agent | multi
+    loop_model: str | None = None
+    max_iterations: int | None = None
+    agent_models: dict[str, str] | None = None
 
 
 @router.get("/catalog")
@@ -171,12 +226,73 @@ async def mobile_multi_agent(
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """SSE stream: NVIDIA multi-agent loop (orchestrator → visual → executor)."""
+    orch = get_orchestrator_settings(current_user.id)
 
     async def stream():
-        async for event in run_multi_agent(data.goal, data.mode, data.history, user_id=current_user.id):
+        async for event in run_multi_agent(
+            data.goal,
+            data.mode,
+            data.history,
+            user_id=current_user.id,
+            custom_models=orch.get("agent_models"),
+        ):
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@router.post("/agent-loop/run")
+async def mobile_agent_loop(
+    data: AgentLoopIn,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """SSE stream: single-model tool loop (Cursor-style agent)."""
+    from app.agent.tools import set_tool_user
+    set_tool_user(current_user.id)
+    orch = get_orchestrator_settings(current_user.id)
+    model = data.model or orch.get("loop_model") or settings.LLM_MODEL
+    max_iter = data.max_iterations or orch.get("max_iterations", 12)
+
+    async def stream():
+        async for event in run_single_model_agent(
+            data.goal,
+            model=model,
+            mode=data.mode,
+            history=data.history,
+            max_iterations=max_iter,
+            force_loop=data.force_loop,
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@router.get("/settings/orchestrator")
+async def mobile_get_orchestrator(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    return {"settings": get_orchestrator_settings(current_user.id)}
+
+
+@router.post("/settings/orchestrator")
+async def mobile_save_orchestrator(
+    data: OrchestratorSettingsIn,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    saved = save_orchestrator_settings(current_user.id, data.model_dump(exclude_none=True))
+    return {"settings": saved}
+
+
+@router.post("/settings/orchestrator/test")
+async def mobile_test_orchestrator(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """Health check for VPS orchestrator."""
+    import httpx
+    orch = get_orchestrator_settings(current_user.id)
+    url = f"http://{orch['host']}:{orch['port']}/health"
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            res = await client.get(url)
+            return {"ok": res.status_code < 400, "status": res.status_code, "url": url, "body": res.text[:200]}
+    except Exception as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
 
 
 @router.post("/chat", response_model=ChatOut)

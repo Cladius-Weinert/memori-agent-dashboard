@@ -99,10 +99,12 @@ async def _call_agent(
     user: str,
     *,
     max_tokens: int = 2048,
+    models: dict[AgentRole, str] | None = None,
 ) -> tuple[str, str]:
     """Returns (content, model_used)."""
     client = _client()
-    model = AGENT_MODELS.get(role, FALLBACK_MODEL)
+    registry = models or AGENT_MODELS
+    model = registry.get(role, AGENT_MODELS.get(role, FALLBACK_MODEL))
     try:
         resp = await client.chat.completions.create(
             model=model,
@@ -184,10 +186,16 @@ async def run_multi_agent(
     mode: str = "chat",
     history: list[dict[str, str]] | None = None,
     user_id: int | None = None,
+    custom_models: dict[str, str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield SSE-style events as each NVIDIA sub-agent runs."""
     from app.agent.tools import set_tool_user
     set_tool_user(user_id)
+    models: dict[AgentRole, str] = dict(AGENT_MODELS)
+    if custom_models:
+        for role in AgentRole:
+            if role.value in custom_models:
+                models[role] = custom_models[role.value]
     state = MultiAgentState(goal=goal, mode=mode)
     agents = _classify_goal(goal, mode)
     context_parts: list[str] = []
@@ -195,7 +203,7 @@ async def run_multi_agent(
     if history:
         context_parts.append("History:\n" + "\n".join(f"{h['role']}: {h['content'][:200]}" for h in history[-5:]))
 
-    yield {"type": "agents", "agents": [{"role": a.value, "label": AGENT_LABELS[a], "model": AGENT_MODELS[a]} for a in agents]}
+    yield {"type": "agents", "agents": [{"role": a.value, "label": AGENT_LABELS[a], "model": models[a]} for a in agents]}
 
     orchestrator_done = False
     while state.loop_count < MAX_LOOPS and not state.done:
@@ -204,13 +212,13 @@ async def run_multi_agent(
         for role in agents:
             if role == AgentRole.ORCHESTRATOR and orchestrator_done:
                 continue
-            step = AgentStep(agent=role, status="running", model=AGENT_MODELS[role])
+            step = AgentStep(agent=role, status="running", model=models[role])
             state.steps.append(step)
             yield {
                 "type": "agent_start",
                 "agent": role.value,
                 "label": AGENT_LABELS[role],
-                "model": AGENT_MODELS[role],
+                "model": models[role],
                 "loop": state.loop_count,
             }
             yield {
@@ -218,14 +226,14 @@ async def run_multi_agent(
                 "kind": "agent",
                 "status": "running",
                 "text": AGENT_LABELS[role],
-                "detail": AGENT_MODELS[role].split("/")[-1],
+                "detail": models[role].split("/")[-1],
             }
 
             ctx = "\n".join(context_parts)
             user_msg = f"Goal: {goal}\nMode: {mode}\n\n{ctx}"
 
             if role == AgentRole.ORCHESTRATOR:
-                content, model = await _call_agent(role, ORCHESTRATOR_SYSTEM, user_msg, max_tokens=1024)
+                content, model = await _call_agent(role, ORCHESTRATOR_SYSTEM, user_msg, max_tokens=1024, models=models)
                 parsed = _strip_json(content)
                 if isinstance(parsed, dict) and "steps" in parsed:
                     state.plan = parsed.get("steps", [])
@@ -234,13 +242,13 @@ async def run_multi_agent(
                     orchestrator_done = True
                 step.output = content
             elif role == AgentRole.VISUAL:
-                content, model = await _call_agent(role, VISUAL_SYSTEM, user_msg, max_tokens=1500)
+                content, model = await _call_agent(role, VISUAL_SYSTEM, user_msg, max_tokens=1500, models=models)
                 step.output = content
             elif role == AgentRole.DEEP:
-                content, model = await _call_agent(role, DEEP_SYSTEM, user_msg, max_tokens=1500)
+                content, model = await _call_agent(role, DEEP_SYSTEM, user_msg, max_tokens=1500, models=models)
                 step.output = content
             elif role == AgentRole.EXPLORE:
-                content, model = await _call_agent(role, EXPLORE_SYSTEM, user_msg, max_tokens=800)
+                content, model = await _call_agent(role, EXPLORE_SYSTEM, user_msg, max_tokens=800, models=models)
                 step.output = content
             else:
                 tool_ctx = ""
@@ -251,7 +259,7 @@ async def run_multi_agent(
                 synth_ctx = ctx + tool_ctx + "\n\nSpecialist outputs:\n" + "\n---\n".join(
                     f"[{s.agent.value}]: {s.output[:500]}" for s in state.steps if s.output
                 )
-                content, model = await _call_agent(role, EXECUTOR_SYSTEM, f"Goal: {goal}\n\n{synth_ctx}", max_tokens=2048)
+                content, model = await _call_agent(role, EXECUTOR_SYSTEM, f"Goal: {goal}\n\n{synth_ctx}", max_tokens=2048, models=models)
                 step.output = content
                 state.final_reply = content
 
@@ -304,6 +312,7 @@ async def run_multi_agent(
                     EXECUTOR_SYSTEM,
                     f"Goal: {goal}\n\n{synth}\n\nTool execution results:\n{tool_blob}\n\nSummarize outcomes for the user.",
                     max_tokens=2048,
+                    models=models,
                 )
                 state.final_reply = final_content
                 yield {

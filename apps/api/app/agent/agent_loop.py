@@ -107,9 +107,15 @@ async def run_tool_loop(
     context: list[str] | None = None,
     max_iterations: int = MAX_TOOL_ITERATIONS,
     auto_approve: bool = False,
+    executor_model: str | None = None,
+    reflect_model: str | None = None,
+    force: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Execute tools in a loop until done, fail, or max iterations."""
-    if not _goal_needs_tools(goal, mode, plan):
+    exec_model = executor_model or EXECUTOR_MODEL
+    refl_model = reflect_model or ORCHESTRATOR_MODEL
+
+    if not force and not _goal_needs_tools(goal, mode, plan):
         return
 
     executed: list[dict[str, Any]] = []
@@ -132,7 +138,7 @@ async def run_tool_loop(
             f"Context:\n" + "\n".join(ctx[-8:]) + f"\n\nExecuted so far:\n{history}"
         )
 
-        raw, model = await _llm(EXECUTOR_MODEL, TOOL_SYSTEM, user_msg, max_tokens=800)
+        raw, model = await _llm(exec_model, TOOL_SYSTEM, user_msg, max_tokens=800)
         decision = _strip_json(raw)
         if not isinstance(decision, dict):
             decision = {"action": "fail", "reason": "bad decision format"}
@@ -234,7 +240,7 @@ async def run_tool_loop(
                 "done_criteria": done_criteria,
                 "executed": executed[-4:],
             }, default=str)[:4000]
-            reflect_raw, _ = await _llm(ORCHESTRATOR_MODEL, REFLECT_SYSTEM, reflect_user, max_tokens=256)
+            reflect_raw, _ = await _llm(refl_model, REFLECT_SYSTEM, reflect_user, max_tokens=256)
             verdict = _strip_json(reflect_raw)
             complete = isinstance(verdict, dict) and verdict.get("complete") is True
             yield {
@@ -260,6 +266,61 @@ async def run_tool_loop(
         "executed": executed,
         "iterations": max_iterations,
     }
+
+
+CHAT_SYSTEM = """You are Opsora, an expert cloud operations AI assistant.
+Be concise, actionable, and helpful. Use markdown sparingly."""
+
+
+async def run_single_model_agent(
+    goal: str,
+    *,
+    model: str,
+    mode: str = "chat",
+    history: list[dict[str, str]] | None = None,
+    max_iterations: int = MAX_TOOL_ITERATIONS,
+    force_loop: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """Single-model agent: tool loop when needed, otherwise direct chat."""
+    needs_tools = force_loop or _goal_needs_tools(goal, mode)
+
+    if needs_tools:
+        reply_parts: list[str] = []
+        async for ev in run_tool_loop(
+            goal,
+            mode=mode,
+            max_iterations=max_iterations,
+            executor_model=model,
+            reflect_model=model,
+            force=force_loop,
+        ):
+            yield ev
+            if ev.get("type") == "loop_done":
+                reply_parts.append(str(ev.get("summary", "")))
+        summary = reply_parts[-1] if reply_parts else "Selesai."
+        yield {"type": "done", "reply": summary, "plan": [], "loops": 1, "model": model}
+        return
+
+    client = _client()
+    messages: list[dict[str, str]] = [{"role": "system", "content": CHAT_SYSTEM}]
+    for h in (history or [])[-10:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": goal})
+
+    yield {"type": "activity", "kind": "agent", "status": "running", "text": "Thinking", "detail": model.split("/")[-1]}
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.4,
+            max_tokens=2048,
+        )
+        reply = resp.choices[0].message.content or ""
+    except Exception as exc:
+        reply = f"Error: {exc}"
+    yield {"type": "activity", "kind": "agent", "status": "done", "text": "Reply", "detail": model.split("/")[-1]}
+    yield {"type": "done", "reply": reply, "plan": [], "loops": 0, "model": model}
 
 
 def _truncate_result(result: dict[str, Any], limit: int = 1200) -> dict[str, Any]:

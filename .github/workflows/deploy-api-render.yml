@@ -1,0 +1,36 @@
+name: Deploy Opsora API
+
+on:
+  push:
+    branches: [main, master, cursor/full-stack-setup-64c1]
+    paths:
+      - "apps/api/**"
+      - "deploy/**"
+      - ".github/workflows/deploy-api-render.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+    steps:
+      - name: Trigger Render deploy
+        run: curl -sf -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+
+  verify:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+    steps:
+      - name: Wait for health
+        run: |
+          URL="${{ secrets.RENDER_API_URL }}"
+          for i in $(seq 1 30); do
+            if curl -sf "$URL/healthz" >/dev/null; then
+              echo "API healthy at $URL"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Health check failed" >&2
+          exit 1
