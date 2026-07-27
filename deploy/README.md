@@ -102,15 +102,30 @@ Or use GitHub Actions (set repo secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`):
 # .github/workflows/deploy-vps.yml — see repo
 ```
 
-## External Database (Supabase fallback)
+## Supabase Database (recommended)
 
-If Docker Postgres is unreliable, point `DATABASE_URL` at Supabase Postgres (project `opsora-prod`):
+Opsora Agent uses schema **`agent`** in project **`opsora-prod`** (`mwbgkkthwwlcndccnbnf`, Singapore) — isolated from CRM tables in `public`.
 
+**Setup:**
+
+1. Supabase Dashboard → **opsora-prod** → Settings → **Database** → copy the **Transaction pooler** password
+2. Edit `deploy/.env`:
+
+```bash
+SUPABASE_PROJECT_REF=mwbgkkthwwlcndccnbnf
+SUPABASE_DB_PASSWORD=<paste-database-password>
+DB_SCHEMA=agent
 ```
-DATABASE_URL=postgresql+asyncpg://postgres.[ref]:[password]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?ssl=require
+
+3. Deploy:
+
+```bash
+bash deploy/deploy-production.sh
 ```
 
-Run migrations once: `cd apps/api && alembic upgrade head`
+The API auto-builds the pooler URL (`aws-0-ap-southeast-1.pooler.supabase.com:6543`) for IPv4 networks. Schema `agent` is already migrated (tables: `users`, `agent_jobs`, `conversations`, etc.).
+
+When using Supabase, local Postgres is not started and alembic is skipped.
 
 ## Terraform Provisioning
 

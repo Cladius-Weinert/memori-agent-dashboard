@@ -11,7 +11,7 @@ echo "=== Opsora Agent Production Deploy ==="
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Creating $ENV_FILE from example..."
   cp "$DEPLOY_DIR/.env.example" "$ENV_FILE"
-  echo "⚠️  Edit $ENV_FILE — set JWT_SECRET and LLM_API_KEY before production use."
+  echo "⚠️  Edit $ENV_FILE — set JWT_SECRET, DATABASE_URL, and LLM_API_KEY before production use."
 fi
 
 # Inject NVIDIA key if available in environment
@@ -38,46 +38,53 @@ fi
 
 cd "$DEPLOY_DIR"
 
-# Detect broken Docker internal DB networking (API container cannot reach db:5432)
-detect_db_url() {
-  local internal="postgresql+asyncpg://memori:memori@db:5432/memori?ssl=disable"
-  local host_fallback="postgresql+asyncpg://memori:memori@host.docker.internal:5433/memori?ssl=disable"
-  if $COMPOSE run --rm --no-deps -T api python3 -c \
-    "import socket; s=socket.create_connection(('db',5432),2); s.close()" 2>/dev/null; then
-    echo "$internal"
-  else
-    echo "⚠️  Inter-container DB unreachable — routing API via host.docker.internal:5433" >&2
-    echo "$host_fallback"
-  fi
-}
-
 echo "Building and starting containers..."
 if docker compose version >/dev/null 2>&1; then
-  COMPOSE="docker compose"
+  COMPOSE="docker compose -f docker-compose.yml"
 elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE="docker-compose"
+  COMPOSE="docker-compose -f docker-compose.yml"
 else
   echo "ERROR: docker compose not installed. Run: sudo apt install docker-compose-v2"
   exit 1
 fi
 
-# Use sudo if docker socket not accessible
 if ! docker info >/dev/null 2>&1; then
   COMPOSE="sudo $COMPOSE"
 fi
 
-# Start DB first so host port 5433 is available for fallback routing
-$COMPOSE up -d --build db redis
-sleep 3
+DATABASE_URL="$(grep '^DATABASE_URL=' "$ENV_FILE" | cut -d= -f2- || true)"
+SUPABASE_REF="$(grep '^SUPABASE_PROJECT_REF=' "$ENV_FILE" | cut -d= -f2- || true)"
 
-DETECTED_DB_URL="$(detect_db_url)"
-if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
-  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DETECTED_DB_URL}|" "$ENV_FILE"
+if echo "$DATABASE_URL" | grep -qi supabase || [[ -n "$SUPABASE_REF" ]]; then
+  echo "✅ Using Supabase Postgres (schema: ${DB_SCHEMA:-agent})"
+  if ! grep -q '^API_NETWORK_MODE=' "$ENV_FILE" 2>/dev/null; then
+    echo "API_NETWORK_MODE=host" >> "$ENV_FILE"
+    echo "API_INTERNAL_URL=http://host.docker.internal:8000" >> "$ENV_FILE"
+  fi
+  export API_NETWORK_MODE=host
+  export API_INTERNAL_URL=http://host.docker.internal:8000
+  $COMPOSE up -d --build redis api web
 else
-  echo "DATABASE_URL=${DETECTED_DB_URL}" >> "$ENV_FILE"
-fi
+  detect_db_url() {
+    local internal="postgresql+asyncpg://memori:memori@host.docker.internal:5433/memori?ssl=disable"
+    $COMPOSE --profile local-db up -d --build db redis
+    sleep 3
+    if $COMPOSE run --rm --no-deps -T api python3 -c \
+      "import socket; s=socket.create_connection(('host.docker.internal',5433),2); s.close()" 2>/dev/null; then
+      echo "$internal"
+    else
+      echo "postgresql+asyncpg://memori:memori@db:5432/memori?ssl=disable"
+    fi
+  }
 
-$COMPOSE up -d --build api web
+  DETECTED_DB_URL="$(detect_db_url)"
+  if grep -q '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null; then
+    sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DETECTED_DB_URL}|" "$ENV_FILE"
+  else
+    echo "DATABASE_URL=${DETECTED_DB_URL}" >> "$ENV_FILE"
+  fi
+  $COMPOSE up -d --build api web
+fi
 
 echo ""
 echo "=== Deployed ==="
