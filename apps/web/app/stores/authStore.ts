@@ -31,6 +31,7 @@ export const getHeaders = (): Record<string, string> => {
 };
 
 export const apiUrl = (path: string): string => {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-  return `${base}${path}`;
+  const base = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (!base) return path;
+  return `${base.replace(/\/$/, "")}${path}`;
 };

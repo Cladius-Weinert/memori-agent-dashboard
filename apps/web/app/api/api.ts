@@ -154,7 +154,10 @@ export const gitApi = {
 
 // WebSocket helper — includes auth token as query param
 export function wsUrl(instanceId: number): string {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const base =
+    configured ||
+    (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000");
   const wsBase = base.replace(/^http/, "ws");
   const token = useAuthStore.getState().token ?? "";
   return `${wsBase}/ws/terminal/${instanceId}?token=${encodeURIComponent(token)}`;

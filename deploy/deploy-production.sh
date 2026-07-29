@@ -57,10 +57,16 @@ SUPABASE_REF="$(grep '^SUPABASE_PROJECT_REF=' "$ENV_FILE" | cut -d= -f2- || true
 
 if echo "$DATABASE_URL" | grep -qi supabase || [[ -n "$SUPABASE_REF" ]] || grep -q '^SUPABASE_ANON_KEY=.' "$ENV_FILE" 2>/dev/null; then
   echo "✅ Using Supabase (REST API or pooler, schema: agent)"
-  if grep -q '^SUPABASE_ANON_KEY=.' "$ENV_FILE" 2>/dev/null && ! grep -q '^API_NETWORK_MODE=' "$ENV_FILE" 2>/dev/null; then
-    echo "API_NETWORK_MODE=bridge" >> "$ENV_FILE"
+  $COMPOSE up -d --build redis api
+  sleep 2
+  COMPOSE_FILES="-f docker-compose.yml"
+  if ! $COMPOSE run --rm --no-deps -T web wget -qO- --timeout=3 http://api:8000/healthz >/dev/null 2>&1; then
+    echo "⚠️  Inter-container networking unavailable — API on bridge + hostnet web overlay"
+    $COMPOSE -f docker-compose.yml -f docker-compose.bridge.yml up -d --build api
+    sleep 2
+    COMPOSE_FILES="-f docker-compose.yml -f docker-compose.bridge.yml -f docker-compose.hostnet.yml"
   fi
-  $COMPOSE up -d --build redis api web
+  $COMPOSE $COMPOSE_FILES up -d --build web
 else
   detect_db_url() {
     local internal="postgresql+asyncpg://memori:memori@host.docker.internal:5433/memori?ssl=disable"

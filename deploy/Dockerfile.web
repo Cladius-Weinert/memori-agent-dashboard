@@ -4,6 +4,11 @@ WORKDIR /build
 COPY apps/web/package.json apps/web/package-lock.json* ./
 RUN npm ci --ignore-scripts 2>/dev/null || npm install
 COPY apps/web/ .
+# Rewrites in next.config.js are baked into routes-manifest.json at build time.
+ARG API_INTERNAL_URL=http://api:8000
+ARG NEXT_PUBLIC_API_URL=
+ENV API_INTERNAL_URL=$API_INTERNAL_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
 FROM node:20-alpine
